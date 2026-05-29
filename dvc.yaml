@@ -1,10 +1,115 @@
 stages:
-  train_herg:
-    cmd: uv run python src/models/train_baseline.py
+  train_solubility_aqsoldb:
+    cmd: uv run python -m src.models.train_admet_xgboost --config configs/training.yaml --dataset Solubility_AqSolDB
     deps:
-      - src/models/train_baseline.py
-      - src/tools/descriptors.py
-      - src/mlops/validation.py
-      - data/processed/herg.csv
+      - configs/training.yaml
+      - pyproject.toml
+      - src/models/datasets.py
+      - src/models/featurizers.py
+      - src/models/metrics.py
+      - src/models/splitting.py
+      - src/models/train_admet_xgboost.py
+      - src/models/validation.py
     outs:
-      - models/herg
+      - models/admet_xgboost/Solubility_AqSolDB/model.joblib
+      - models/admet_xgboost/Solubility_AqSolDB/featurizer.joblib
+      - models/admet_xgboost/Solubility_AqSolDB/metadata.json
+      - models/admet_xgboost/Solubility_AqSolDB/split_report.csv
+      - models/admet_xgboost/Solubility_AqSolDB/rejected_molecules.csv
+      - models/admet_xgboost/Solubility_AqSolDB/training_fps.joblib
+      - models/admet_xgboost/Solubility_AqSolDB/training_smiles.joblib
+    metrics:
+      - models/admet_xgboost/Solubility_AqSolDB/metrics.json:
+          cache: false
+
+  train_lipophilicity_astrazeneca:
+    cmd: uv run python -m src.models.train_admet_xgboost --config configs/training.yaml --dataset Lipophilicity_AstraZeneca
+    deps:
+      - configs/training.yaml
+      - pyproject.toml
+      - src/models/datasets.py
+      - src/models/featurizers.py
+      - src/models/metrics.py
+      - src/models/splitting.py
+      - src/models/train_admet_xgboost.py
+      - src/models/validation.py
+    outs:
+      - models/admet_xgboost/Lipophilicity_AstraZeneca/model.joblib
+      - models/admet_xgboost/Lipophilicity_AstraZeneca/featurizer.joblib
+      - models/admet_xgboost/Lipophilicity_AstraZeneca/metadata.json
+      - models/admet_xgboost/Lipophilicity_AstraZeneca/split_report.csv
+      - models/admet_xgboost/Lipophilicity_AstraZeneca/rejected_molecules.csv
+      - models/admet_xgboost/Lipophilicity_AstraZeneca/training_fps.joblib
+      - models/admet_xgboost/Lipophilicity_AstraZeneca/training_smiles.joblib
+    metrics:
+      - models/admet_xgboost/Lipophilicity_AstraZeneca/metrics.json:
+          cache: false
+
+  train_ames:
+    cmd: uv run python -m src.models.train_admet_xgboost --config configs/training.yaml --dataset AMES
+    deps:
+      - configs/training.yaml
+      - pyproject.toml
+      - src/models/datasets.py
+      - src/models/featurizers.py
+      - src/models/metrics.py
+      - src/models/splitting.py
+      - src/models/train_admet_xgboost.py
+      - src/models/validation.py
+    outs:
+      - models/admet_xgboost/AMES/model.joblib
+      - models/admet_xgboost/AMES/featurizer.joblib
+      - models/admet_xgboost/AMES/metadata.json
+      - models/admet_xgboost/AMES/split_report.csv
+      - models/admet_xgboost/AMES/rejected_molecules.csv
+      - models/admet_xgboost/AMES/training_fps.joblib
+      - models/admet_xgboost/AMES/training_smiles.joblib
+    metrics:
+      - models/admet_xgboost/AMES/metrics.json:
+          cache: false
+
+  train_herg:
+    cmd: uv run python -m src.models.train_admet_xgboost --config configs/training.yaml --dataset hERG
+    deps:
+      - configs/training.yaml
+      - pyproject.toml
+      - src/models/datasets.py
+      - src/models/featurizers.py
+      - src/models/metrics.py
+      - src/models/splitting.py
+      - src/models/train_admet_xgboost.py
+      - src/models/validation.py
+    outs:
+      - models/admet_xgboost/hERG/model.joblib
+      - models/admet_xgboost/hERG/featurizer.joblib
+      - models/admet_xgboost/hERG/metadata.json
+      - models/admet_xgboost/hERG/split_report.csv
+      - models/admet_xgboost/hERG/rejected_molecules.csv
+      - models/admet_xgboost/hERG/training_fps.joblib
+      - models/admet_xgboost/hERG/training_smiles.joblib
+    metrics:
+      - models/admet_xgboost/hERG/metrics.json:
+          cache: false
+
+  train_cyp3a4_veith:
+    cmd: uv run python -m src.models.train_admet_xgboost --config configs/training.yaml --dataset CYP3A4_Veith
+    deps:
+      - configs/training.yaml
+      - pyproject.toml
+      - src/models/datasets.py
+      - src/models/featurizers.py
+      - src/models/metrics.py
+      - src/models/splitting.py
+      - src/models/train_admet_xgboost.py
+      - src/models/validation.py
+    outs:
+      - models/admet_xgboost/CYP3A4_Veith/model.joblib
+      - models/admet_xgboost/CYP3A4_Veith/featurizer.joblib
+      - models/admet_xgboost/CYP3A4_Veith/metadata.json
+      - models/admet_xgboost/CYP3A4_Veith/split_report.csv
+      - models/admet_xgboost/CYP3A4_Veith/rejected_molecules.csv
+      - models/admet_xgboost/CYP3A4_Veith/training_fps.joblib
+      - models/admet_xgboost/CYP3A4_Veith/training_smiles.joblib
+    metrics:
+      - models/admet_xgboost/CYP3A4_Veith/metrics.json:
+          cache: false
