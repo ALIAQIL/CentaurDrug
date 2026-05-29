@@ -6,12 +6,18 @@ training:
   artifact_dir: models/admet_xgboost
   use_mlflow: true
   mlflow_experiment: centaurdrug-admet-xgboost
+  xgboost_n_jobs: 2
 
 features:
   morgan_radius: 2
   morgan_n_bits: 2048
   use_maccs: true
   use_rdkit_descriptors: true
+
+preprocessing:
+  # XGBoost does not need StandardScaler.
+  # Keep false by default because binary fingerprints should stay binary.
+  use_scaler: false
 
 splitting:
   strategy: scaffold
@@ -22,26 +28,45 @@ splitting:
 
 hyperparameter_search:
   enabled: true
-  n_trials: 20
-  cv_folds: 5
+  n_trials: 5
+  cv_folds: 3
+  early_stop_fraction_inside_cv: 0.15
+  timeout_seconds: null
+
+applicability_domain:
+  enabled: true
+  tanimoto_threshold: 0.35
+  max_training_fps_for_ad: 50000
+
+uncertainty:
+  # We keep this false for now.
+  # Later we can add quantile XGBoost or conformal prediction.
+  quantile_models_enabled: false
+  lower_alpha: 0.10
+  upper_alpha: 0.90
 
 datasets:
   Solubility_AqSolDB:
     task_type: regression
     primary_metric: rmse
+    prediction_unit: TDC_AqSolDB_target_scale
 
   Lipophilicity_AstraZeneca:
     task_type: regression
     primary_metric: rmse
+    prediction_unit: TDC_Lipophilicity_target_scale
 
   AMES:
     task_type: classification
     primary_metric: roc_auc
+    positive_class_name: toxic_or_mutagenic
 
   hERG:
     task_type: classification
     primary_metric: roc_auc
+    positive_class_name: hERG_risk
 
   CYP3A4_Veith:
     task_type: classification
     primary_metric: roc_auc
+    positive_class_name: CYP3A4_inhibitor
