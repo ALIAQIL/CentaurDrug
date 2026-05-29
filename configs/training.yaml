@@ -1,0 +1,47 @@
+project:
+  name: centaurdrug
+
+training:
+  random_seed: 42
+  artifact_dir: models/admet_xgboost
+  use_mlflow: true
+  mlflow_experiment: centaurdrug-admet-xgboost
+
+features:
+  morgan_radius: 2
+  morgan_n_bits: 2048
+  use_maccs: true
+  use_rdkit_descriptors: true
+
+splitting:
+  strategy: scaffold
+  train_frac: 0.70
+  early_stop_frac: 0.10
+  valid_frac: 0.10
+  test_frac: 0.10
+
+hyperparameter_search:
+  enabled: true
+  n_trials: 20
+  cv_folds: 5
+
+datasets:
+  Solubility_AqSolDB:
+    task_type: regression
+    primary_metric: rmse
+
+  Lipophilicity_AstraZeneca:
+    task_type: regression
+    primary_metric: rmse
+
+  AMES:
+    task_type: classification
+    primary_metric: roc_auc
+
+  hERG:
+    task_type: classification
+    primary_metric: roc_auc
+
+  CYP3A4_Veith:
+    task_type: classification
+    primary_metric: roc_auc
