@@ -1,0 +1,32 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: centaurdrug-api
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: centaurdrug-api
+  template:
+    metadata:
+      labels:
+        app: centaurdrug-api
+    spec:
+      containers:
+        - name: api
+          image: centaurdrug-api:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8000
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: centaurdrug-api-service
+spec:
+  selector:
+    app: centaurdrug-api
+  ports:
+    - port: 8000
+      targetPort: 8000
+  type: ClusterIP

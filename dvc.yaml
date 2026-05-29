@@ -1,0 +1,10 @@
+stages:
+  train_herg:
+    cmd: uv run python src/models/train_baseline.py
+    deps:
+      - src/models/train_baseline.py
+      - src/tools/descriptors.py
+      - src/mlops/validation.py
+      - data/processed/herg.csv
+    outs:
+      - models/herg
