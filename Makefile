@@ -22,3 +22,6 @@ train-phase1: train-sol train-lipo train-ames train-herg train-cyp3a4
 
 predict-sol:
 	uv run python -m src.models.predict --artifact-dir models/admet_xgboost/Solubility_AqSolDB --smiles "CCO"
+
+evaluate:
+	uv run python -m src.tools.evaluator --smiles "CCO"

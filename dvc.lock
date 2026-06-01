@@ -1,0 +1,349 @@
+schema: '2.0'
+stages:
+  train_solubility_aqsoldb:
+    cmd: uv run python -m src.models.train_admet_xgboost --config 
+      configs/training.yaml --dataset Solubility_AqSolDB
+    deps:
+    - path: configs/training.yaml
+      hash: md5
+      md5: 7a3c7e25610072f31af13adbbfbba9cd
+      size: 1550
+    - path: pyproject.toml
+      hash: md5
+      md5: 35c9a5dc641a0baa0d7dafe158e447c8
+      size: 543
+    - path: src/models/datasets.py
+      hash: md5
+      md5: 5856b08fbdd4931b93650508db8f23b9
+      size: 2791
+    - path: src/models/featurizers.py
+      hash: md5
+      md5: 02389fe545a71ac280da5afd1e2d1412
+      size: 4340
+    - path: src/models/metrics.py
+      hash: md5
+      md5: 729395962c9455e37da98d8d54f04927
+      size: 1521
+    - path: src/models/splitting.py
+      hash: md5
+      md5: 0408eedaa4658600a693ce19574be001
+      size: 6388
+    - path: src/models/train_admet_xgboost.py
+      hash: md5
+      md5: 93e57832be991700fa1ab964973deccb
+      size: 23526
+    - path: src/models/validation.py
+      hash: md5
+      md5: 37291006db37bea4d6eb788f915d227d
+      size: 1212
+    outs:
+    - path: models/admet_xgboost/Solubility_AqSolDB/featurizer.joblib
+      hash: md5
+      md5: 4b604c62922df26cb9e6cc623ab549e6
+      size: 359
+    - path: models/admet_xgboost/Solubility_AqSolDB/metadata.json
+      hash: md5
+      md5: b6c823937d36a8a211a1e3e08617524d
+      size: 2104
+    - path: models/admet_xgboost/Solubility_AqSolDB/metrics.json
+      hash: md5
+      md5: 111a29cd596f7459ba6c6b71f93418f8
+      size: 578
+    - path: models/admet_xgboost/Solubility_AqSolDB/model.joblib
+      hash: md5
+      md5: 4ce873abb47c5004e17c355611c61201
+      size: 2314511
+    - path: models/admet_xgboost/Solubility_AqSolDB/rejected_molecules.csv
+      hash: md5
+      md5: aa0e335cd6b3a5ea625ca2bc964d581f
+      size: 243
+    - path: models/admet_xgboost/Solubility_AqSolDB/split_report.csv
+      hash: md5
+      md5: c95db927e2cfee3fa851cb1a2473fd8b
+      size: 370
+    - path: models/admet_xgboost/Solubility_AqSolDB/training_fps.joblib
+      hash: md5
+      md5: d73d736e0bc25332c9eb9ad5139132ed
+      size: 413462
+    - path: models/admet_xgboost/Solubility_AqSolDB/training_smiles.joblib
+      hash: md5
+      md5: 87f210abc024a0bfcd18ec315c19d96d
+      size: 250983
+  train_lipophilicity_astrazeneca:
+    cmd: uv run python -m src.models.train_admet_xgboost --config 
+      configs/training.yaml --dataset Lipophilicity_AstraZeneca
+    deps:
+    - path: configs/training.yaml
+      hash: md5
+      md5: 7a3c7e25610072f31af13adbbfbba9cd
+      size: 1550
+    - path: pyproject.toml
+      hash: md5
+      md5: 35c9a5dc641a0baa0d7dafe158e447c8
+      size: 543
+    - path: src/models/datasets.py
+      hash: md5
+      md5: 5856b08fbdd4931b93650508db8f23b9
+      size: 2791
+    - path: src/models/featurizers.py
+      hash: md5
+      md5: 02389fe545a71ac280da5afd1e2d1412
+      size: 4340
+    - path: src/models/metrics.py
+      hash: md5
+      md5: 729395962c9455e37da98d8d54f04927
+      size: 1521
+    - path: src/models/splitting.py
+      hash: md5
+      md5: 0408eedaa4658600a693ce19574be001
+      size: 6388
+    - path: src/models/train_admet_xgboost.py
+      hash: md5
+      md5: 93e57832be991700fa1ab964973deccb
+      size: 23526
+    - path: src/models/validation.py
+      hash: md5
+      md5: 37291006db37bea4d6eb788f915d227d
+      size: 1212
+    outs:
+    - path: models/admet_xgboost/Lipophilicity_AstraZeneca/featurizer.joblib
+      hash: md5
+      md5: 4b604c62922df26cb9e6cc623ab549e6
+      size: 359
+    - path: models/admet_xgboost/Lipophilicity_AstraZeneca/metadata.json
+      hash: md5
+      md5: f2c4547a333a464b208ac6ae028251fb
+      size: 2123
+    - path: models/admet_xgboost/Lipophilicity_AstraZeneca/metrics.json
+      hash: md5
+      md5: 7b3c082f4d4b13cc3716414647255f50
+      size: 584
+    - path: models/admet_xgboost/Lipophilicity_AstraZeneca/model.joblib
+      hash: md5
+      md5: 9543fa3ab45d96c5b273685ef9e612d4
+      size: 1716209
+    - path: 
+        models/admet_xgboost/Lipophilicity_AstraZeneca/rejected_molecules.csv
+      hash: md5
+      md5: 502b0f614382c0216255c5db6d5f1d96
+      size: 66
+    - path: models/admet_xgboost/Lipophilicity_AstraZeneca/split_report.csv
+      hash: md5
+      md5: cad045e831be048814d7a5d73c3fae22
+      size: 333
+    - path: models/admet_xgboost/Lipophilicity_AstraZeneca/training_fps.joblib
+      hash: md5
+      md5: b1bf8312ea13f121fb49d1387b3d27db
+      size: 228234
+    - path: 
+        models/admet_xgboost/Lipophilicity_AstraZeneca/training_smiles.joblib
+      hash: md5
+      md5: d6e58fe00b5ff387a77db7d975ad2b1a
+      size: 149151
+  train_ames:
+    cmd: uv run python -m src.models.train_admet_xgboost --config 
+      configs/training.yaml --dataset AMES
+    deps:
+    - path: configs/training.yaml
+      hash: md5
+      md5: 7a3c7e25610072f31af13adbbfbba9cd
+      size: 1550
+    - path: pyproject.toml
+      hash: md5
+      md5: 35c9a5dc641a0baa0d7dafe158e447c8
+      size: 543
+    - path: src/models/datasets.py
+      hash: md5
+      md5: 5856b08fbdd4931b93650508db8f23b9
+      size: 2791
+    - path: src/models/featurizers.py
+      hash: md5
+      md5: 02389fe545a71ac280da5afd1e2d1412
+      size: 4340
+    - path: src/models/metrics.py
+      hash: md5
+      md5: 729395962c9455e37da98d8d54f04927
+      size: 1521
+    - path: src/models/splitting.py
+      hash: md5
+      md5: 0408eedaa4658600a693ce19574be001
+      size: 6388
+    - path: src/models/train_admet_xgboost.py
+      hash: md5
+      md5: 93e57832be991700fa1ab964973deccb
+      size: 23526
+    - path: src/models/validation.py
+      hash: md5
+      md5: 37291006db37bea4d6eb788f915d227d
+      size: 1212
+    outs:
+    - path: models/admet_xgboost/AMES/featurizer.joblib
+      hash: md5
+      md5: 4b604c62922df26cb9e6cc623ab549e6
+      size: 359
+    - path: models/admet_xgboost/AMES/metadata.json
+      hash: md5
+      md5: 6106f0beb0ae9ea0b95bae957067e01f
+      size: 2424
+    - path: models/admet_xgboost/AMES/metrics.json
+      hash: md5
+      md5: 1bd4d3a9f6c745c76683ac5e3bc4007b
+      size: 882
+    - path: models/admet_xgboost/AMES/model.joblib
+      hash: md5
+      md5: 2cb197c8001a045cd3c8d423f90e1520
+      size: 1452859
+    - path: models/admet_xgboost/AMES/rejected_molecules.csv
+      hash: md5
+      md5: 502b0f614382c0216255c5db6d5f1d96
+      size: 66
+    - path: models/admet_xgboost/AMES/split_report.csv
+      hash: md5
+      md5: 6c288857b2faf5e10e454c7380a6426e
+      size: 335
+    - path: models/admet_xgboost/AMES/training_fps.joblib
+      hash: md5
+      md5: 01dbccfe7ee9f8dda66127c4482f12f5
+      size: 304519
+    - path: models/admet_xgboost/AMES/training_smiles.joblib
+      hash: md5
+      md5: d36799920dea033a3adeef9f80961fd5
+      size: 173171
+  train_herg:
+    cmd: uv run python -m src.models.train_admet_xgboost --config 
+      configs/training.yaml --dataset hERG
+    deps:
+    - path: configs/training.yaml
+      hash: md5
+      md5: 7a3c7e25610072f31af13adbbfbba9cd
+      size: 1550
+    - path: pyproject.toml
+      hash: md5
+      md5: 35c9a5dc641a0baa0d7dafe158e447c8
+      size: 543
+    - path: src/models/datasets.py
+      hash: md5
+      md5: 5856b08fbdd4931b93650508db8f23b9
+      size: 2791
+    - path: src/models/featurizers.py
+      hash: md5
+      md5: 02389fe545a71ac280da5afd1e2d1412
+      size: 4340
+    - path: src/models/metrics.py
+      hash: md5
+      md5: 729395962c9455e37da98d8d54f04927
+      size: 1521
+    - path: src/models/splitting.py
+      hash: md5
+      md5: 0408eedaa4658600a693ce19574be001
+      size: 6388
+    - path: src/models/train_admet_xgboost.py
+      hash: md5
+      md5: 93e57832be991700fa1ab964973deccb
+      size: 23526
+    - path: src/models/validation.py
+      hash: md5
+      md5: 37291006db37bea4d6eb788f915d227d
+      size: 1212
+    outs:
+    - path: models/admet_xgboost/hERG/featurizer.joblib
+      hash: md5
+      md5: 4b604c62922df26cb9e6cc623ab549e6
+      size: 359
+    - path: models/admet_xgboost/hERG/metadata.json
+      hash: md5
+      md5: 20ee387e0a026849aa66eeba8b472490
+      size: 2401
+    - path: models/admet_xgboost/hERG/metrics.json
+      hash: md5
+      md5: 742f50b66ad618a04a8437f3209c21b9
+      size: 865
+    - path: models/admet_xgboost/hERG/model.joblib
+      hash: md5
+      md5: f31e16be3b74f0cc5508036ac3777eb4
+      size: 113585
+    - path: models/admet_xgboost/hERG/rejected_molecules.csv
+      hash: md5
+      md5: 502b0f614382c0216255c5db6d5f1d96
+      size: 66
+    - path: models/admet_xgboost/hERG/split_report.csv
+      hash: md5
+      md5: 9257df1d392fa1b3e713f986654019ea
+      size: 308
+    - path: models/admet_xgboost/hERG/training_fps.joblib
+      hash: md5
+      md5: 97027cf91968e82e87839a35d878b705
+      size: 34698
+    - path: models/admet_xgboost/hERG/training_smiles.joblib
+      hash: md5
+      md5: 1e432fa7703cc382341f1bd886758996
+      size: 25740
+  train_cyp3a4_veith:
+    cmd: uv run python -m src.models.train_admet_xgboost --config 
+      configs/training.yaml --dataset CYP3A4_Veith
+    deps:
+    - path: configs/training.yaml
+      hash: md5
+      md5: 7a3c7e25610072f31af13adbbfbba9cd
+      size: 1550
+    - path: pyproject.toml
+      hash: md5
+      md5: 35c9a5dc641a0baa0d7dafe158e447c8
+      size: 543
+    - path: src/models/datasets.py
+      hash: md5
+      md5: 5856b08fbdd4931b93650508db8f23b9
+      size: 2791
+    - path: src/models/featurizers.py
+      hash: md5
+      md5: 02389fe545a71ac280da5afd1e2d1412
+      size: 4340
+    - path: src/models/metrics.py
+      hash: md5
+      md5: 729395962c9455e37da98d8d54f04927
+      size: 1521
+    - path: src/models/splitting.py
+      hash: md5
+      md5: 0408eedaa4658600a693ce19574be001
+      size: 6388
+    - path: src/models/train_admet_xgboost.py
+      hash: md5
+      md5: 93e57832be991700fa1ab964973deccb
+      size: 23526
+    - path: src/models/validation.py
+      hash: md5
+      md5: 37291006db37bea4d6eb788f915d227d
+      size: 1212
+    outs:
+    - path: models/admet_xgboost/CYP3A4_Veith/featurizer.joblib
+      hash: md5
+      md5: 4b604c62922df26cb9e6cc623ab549e6
+      size: 359
+    - path: models/admet_xgboost/CYP3A4_Veith/metadata.json
+      hash: md5
+      md5: 2ac8e0f534d465b7d034c86d236570f3
+      size: 2450
+    - path: models/admet_xgboost/CYP3A4_Veith/metrics.json
+      hash: md5
+      md5: 1da94788db14e2e36b7a290ac96e9215
+      size: 900
+    - path: models/admet_xgboost/CYP3A4_Veith/model.joblib
+      hash: md5
+      md5: f30501bc1d62176afae8cd914f00233b
+      size: 1564514
+    - path: models/admet_xgboost/CYP3A4_Veith/rejected_molecules.csv
+      hash: md5
+      md5: 502b0f614382c0216255c5db6d5f1d96
+      size: 66
+    - path: models/admet_xgboost/CYP3A4_Veith/split_report.csv
+      hash: md5
+      md5: 9a10a1c3f548c5eeac65f56a5e13d697
+      size: 339
+    - path: models/admet_xgboost/CYP3A4_Veith/training_fps.joblib
+      hash: md5
+      md5: 44902d443167642a1c8fe973ffb46ddc
+      size: 631877
+    - path: models/admet_xgboost/CYP3A4_Veith/training_smiles.joblib
+      hash: md5
+      md5: b7ba98ad816f46f279a84a4d7983ddc0
+      size: 417383
