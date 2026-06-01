@@ -9,3 +9,4 @@ data/raw/
 data/processed/
 .ipynb_checkpoints/
 .dvc/cache/
+.env

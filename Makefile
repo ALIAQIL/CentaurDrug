@@ -25,3 +25,6 @@ predict-sol:
 
 evaluate:
 	uv run python -m src.tools.evaluator --smiles "CCO"
+
+agent-search:
+	uv run python -m src.agent.graph --smiles "CC(=O)Oc1ccccc1C(=O)O" --max-depth 2 --beam-width 3 --max-candidates-per-node 10
