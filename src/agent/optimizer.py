@@ -24,8 +24,17 @@ def summarize_improvement(
     parent_eval: Dict[str, Any],
     candidate_eval: Dict[str, Any],
 ) -> Dict[str, Any]:
-    parent_vector = build_score_vector(parent_eval)
-    candidate_vector = build_score_vector(candidate_eval)
+    parent_smiles = parent_eval.get("canonical_smiles") or parent_eval.get(
+        "original_smiles"
+    )
+    parent_vector = build_score_vector(
+        parent_eval,
+        reference_smiles=parent_smiles,
+    )
+    candidate_vector = build_score_vector(
+        candidate_eval,
+        reference_smiles=parent_smiles,
+    )
 
     comparison = compare_score_vectors(parent_vector, candidate_vector)
     comparison.update(
@@ -52,7 +61,15 @@ class MoleculeOptimizer:
         top_k: int = 10,
     ) -> Dict[str, Any]:
         parent_eval = self.evaluator.evaluate_molecule(smiles)
-        parent_score_vector = build_score_vector(parent_eval)
+        parent_reference_smiles = (
+            parent_eval.get("canonical_smiles")
+            or parent_eval.get("original_smiles")
+            or smiles
+        )
+        parent_score_vector = build_score_vector(
+            parent_eval,
+            reference_smiles=parent_reference_smiles,
+        )
         parent_score = float(parent_score_vector["scalar_score"])
 
         candidates = generate_candidates(
@@ -65,7 +82,10 @@ class MoleculeOptimizer:
         for candidate in candidates:
             evaluation = self.evaluator.evaluate_molecule(candidate.smiles)
 
-            score_vector = build_score_vector(evaluation)
+            score_vector = build_score_vector(
+                evaluation,
+                reference_smiles=parent_reference_smiles,
+            )
             score = float(score_vector["scalar_score"])
             improvement = summarize_improvement(parent_eval, evaluation)
 

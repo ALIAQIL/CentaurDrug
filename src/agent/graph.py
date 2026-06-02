@@ -11,7 +11,7 @@ os.environ.setdefault("LANGSMITH_TRACING", "false")
 from langgraph.graph import END, START, StateGraph
 
 from src.agent.llm_agent import GeminiStrategyAgent
-from src.agent.scoring import build_score_vector
+from src.agent.scoring import build_candidate_explanation, build_score_vector
 from src.agent.search_tree import OptimizationTree
 from src.agent.transformations import generate_candidates
 from src.tools.evaluator import ADMETPanelEvaluator
@@ -73,8 +73,11 @@ class CentaurDrugGraph:
         smiles = state["smiles"]
 
         evaluation = self.evaluator.evaluate_molecule(smiles)
-        score_vector = build_score_vector(evaluation)
         node_smiles = evaluation.get("canonical_smiles", smiles)
+        score_vector = build_score_vector(
+            evaluation,
+            reference_smiles=node_smiles,
+        )
 
         tree = OptimizationTree()
         root_id = tree.add_root(
@@ -157,6 +160,8 @@ class CentaurDrugGraph:
         if self.evaluator is None:
             raise RuntimeError("Graph evaluator has not been initialized.")
 
+        root_smiles = self._get_root_smiles(tree)
+
         for node_id in frontier_ids:
             parent_node = tree.get_node(node_id)
 
@@ -174,7 +179,6 @@ class CentaurDrugGraph:
                 evaluation = self.evaluator.evaluate_molecule(
                     candidate.smiles
                 )
-                score_vector = build_score_vector(evaluation)
                 node_smiles = evaluation.get(
                     "canonical_smiles",
                     candidate.smiles,
@@ -182,6 +186,11 @@ class CentaurDrugGraph:
 
                 if node_smiles in seen_smiles:
                     continue
+
+                score_vector = build_score_vector(
+                    evaluation,
+                    reference_smiles=root_smiles,
+                )
 
                 child_id = tree.add_child(
                     parent_id=node_id,
@@ -255,17 +264,17 @@ class CentaurDrugGraph:
             "last_strategy": state.get("last_strategy"),
             "messages": state.get("messages", []),
             "best_nodes": [
-                node.to_summary_dict()
+                self._build_node_summary(tree, node)
                 for node in best_nodes
             ],
             "best_candidate_nodes": [
-                node.to_summary_dict()
+                self._build_node_summary(tree, node)
                 for node in best_candidate_nodes
             ],
             "tree_summary": {
                 "root_id": tree.root_id,
                 "nodes": {
-                    node_id: node.to_summary_dict()
+                    node_id: self._build_node_summary(tree, node)
                     for node_id, node in tree.nodes.items()
                 },
             },
@@ -277,6 +286,73 @@ class CentaurDrugGraph:
         return {
             "final_result": final_result,
         }
+
+    def _build_node_summary(
+        self,
+        tree: OptimizationTree,
+        node,
+    ) -> Dict[str, Any]:
+        summary = node.to_summary_dict()
+        raw = node.score_vector.get("raw", {})
+        normalized = node.score_vector.get("normalized", {})
+
+        summary.update(
+            {
+                "score_vector": normalized,
+                "scaffold": raw.get("scaffold"),
+                "synthetic_accessibility": raw.get(
+                    "synthetic_accessibility"
+                ),
+            }
+        )
+
+        if node.parent_id is None:
+            summary.update(
+                {
+                    "delta_vs_parent": 0.0,
+                    "parent_comparison": None,
+                    "improvements": [],
+                    "tradeoffs": [],
+                }
+            )
+            return summary
+
+        parent_node = tree.get_node(node.parent_id)
+        explanation = build_candidate_explanation(
+            parent_vector=parent_node.score_vector,
+            candidate_vector=node.score_vector,
+            candidate_evaluation=node.evaluation,
+        )
+
+        summary.update(
+            {
+                "delta_vs_parent": explanation["delta_vs_parent"],
+                "parent_comparison": explanation["parent_comparison"],
+                "improvements": explanation["improvements"],
+                "tradeoffs": explanation["tradeoffs"],
+            }
+        )
+
+        if tree.root_id and node.parent_id != tree.root_id:
+            root_node = tree.get_node(tree.root_id)
+            root_explanation = build_candidate_explanation(
+                parent_vector=root_node.score_vector,
+                candidate_vector=node.score_vector,
+                candidate_evaluation=node.evaluation,
+            )
+            summary["root_comparison"] = root_explanation[
+                "parent_comparison"
+            ]
+            summary["delta_vs_root"] = root_explanation["delta_vs_parent"]
+
+        return summary
+
+    @staticmethod
+    def _get_root_smiles(tree: OptimizationTree) -> str | None:
+        if tree.root_id is None:
+            return None
+
+        return tree.get_node(tree.root_id).smiles
 
 
 def run_graph(

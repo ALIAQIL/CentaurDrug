@@ -1,5 +1,10 @@
 from src.agent.optimizer import extract_candidate_score, summarize_improvement
-from src.agent.scoring import build_score_vector
+from src.agent.scoring import (
+    build_candidate_explanation,
+    build_score_vector,
+    compute_scaffold_preservation,
+    compute_synthetic_accessibility_proxy,
+)
 
 
 def _evaluation(
@@ -13,6 +18,7 @@ def _evaluation(
 ):
     return {
         "status": "ok",
+        "canonical_smiles": "CCO",
         "rules": {
             "qed": qed,
             "lipinski": {"passed": True},
@@ -78,3 +84,49 @@ def test_summarize_improvement_keeps_legacy_and_vector_keys():
     assert improvement["delta_scalar_score"] == improvement["delta_score"]
     assert improvement["candidate_scalar_score"] == improvement["candidate_score"]
     assert improvement["delta_vector"]["ames_safety"] > 0.0
+
+
+def test_scaffold_preservation_scores_close_analogues():
+    parent = "CC(=O)Oc1ccccc1C(=O)O"
+    candidate = "CC(=O)Oc1cc(F)ccc1C(=O)O"
+
+    scaffold = compute_scaffold_preservation(parent, candidate)
+
+    assert scaffold["status"] == "ok"
+    assert scaffold["murcko_preserved"] is True
+    assert scaffold["preservation_score"] >= 0.5
+    assert scaffold["parent_scaffold"] == scaffold["candidate_scaffold"]
+
+
+def test_synthetic_accessibility_proxy_scores_simple_molecule_as_easy():
+    result = compute_synthetic_accessibility_proxy("CC(=O)Oc1ccccc1C(=O)O")
+
+    assert result["status"] == "ok"
+    assert result["score"] >= 0.75
+    assert result["interpretation"] == "easy"
+    assert "molecular_weight" in result["features"]
+
+
+def test_candidate_explanation_reports_improvements_and_tradeoffs():
+    parent = _evaluation(ames_probability=0.4)
+    candidate = _evaluation(ames_probability=0.1)
+    candidate["overall_assessment"] = {
+        "main_risks": ["out_of_applicability_domain"],
+    }
+
+    parent_vector = build_score_vector(parent, reference_smiles="CCO")
+    candidate_vector = build_score_vector(candidate, reference_smiles="CCO")
+
+    explanation = build_candidate_explanation(
+        parent_vector=parent_vector,
+        candidate_vector=candidate_vector,
+        candidate_evaluation=candidate,
+    )
+
+    assert explanation["delta_vs_parent"] > 0.0
+    assert "score_vector" in explanation
+    assert any("AMES safety improved" in item for item in explanation["improvements"])
+    assert any(
+        "outside the applicability domain" in item
+        for item in explanation["tradeoffs"]
+    )

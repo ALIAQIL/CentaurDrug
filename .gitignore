@@ -10,3 +10,4 @@ data/processed/
 .ipynb_checkpoints/
 .dvc/cache/
 .env
+docs/
