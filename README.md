@@ -22,6 +22,27 @@ uv run mlflow ui --host 0.0.0.0 --port 5000
 
 Then visit `http://localhost:5000`.
 
+## API And Web App
+
+Run the FastAPI backend and built-in HTML/CSS/JS interface:
+
+```bash
+make api
+```
+
+Then visit `http://localhost:8000`.
+
+The plain browser frontend lives in `src/ui/static/` and is served by FastAPI.
+The older Streamlit prototype remains in `src/ui/app.py`.
+
+Main endpoints:
+
+- `GET /health`: service status.
+- `POST /rules`: lightweight rule filters.
+- `POST /evaluate`: full ADMET panel evaluation.
+- `POST /optimize`: LangGraph agent optimization with candidate explanations.
+- `POST /chat`: context-aware copilot chat for the current molecule/candidate.
+
 ## Training Artifacts
 
 Each training run writes artifacts under `models/admet_xgboost/<dataset>/`.

@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = ">=3.12, <3.14"
 dependencies = [
     "apache-airflow>=3.2.1",
+    "fastapi>=0.135.1",
     "google-genai>=1.60.0",
     "joblib>=1.5.3",
     "jupyter>=1.0.0",
@@ -24,6 +25,7 @@ dependencies = [
     "rdkit>=2026.3.2",
     "scikit-learn>=1.8.0",
     "tdc>=0.1",
+    "uvicorn>=0.42.0",
     "xgboost>=3.2.0",
 ]
 [tool.pytest.ini_options]

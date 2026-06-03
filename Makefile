@@ -1,7 +1,17 @@
-.PHONY: test verify-mlflow train-sol train-lipo train-ames train-herg train-cyp3a4 train-phase1 predict-sol
+APP_HOST ?= 0.0.0.0
+APP_PORT ?= 8000
+
+.PHONY: test app run api verify-mlflow train-sol train-lipo train-ames train-herg train-cyp3a4 train-phase1 predict-sol
 
 test:
 	uv run pytest -q
+
+app:
+	uv run uvicorn src.api.main:app --reload --host $(APP_HOST) --port $(APP_PORT)
+
+run: app
+
+api: app
 
 verify-mlflow:
 	uv run python -m src.mlops.verify_mlflow --config configs/training.yaml

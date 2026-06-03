@@ -251,6 +251,7 @@ class CentaurDrugGraph:
 
     def finalize(self, state: OptimizationState) -> Dict[str, Any]:
         tree = state["tree"]
+        root_node = tree.get_node(tree.root_id) if tree.root_id else None
         best_nodes = tree.get_best_nodes(top_k=10)
         best_candidate_nodes = tree.get_best_nodes(top_k=10, min_depth=1)
 
@@ -261,6 +262,8 @@ class CentaurDrugGraph:
             "beam_width": state.get("beam_width", 3),
             "n_nodes": len(tree.nodes),
             "n_candidate_nodes": max(0, len(tree.nodes) - 1),
+            "parent_evaluation": root_node.evaluation if root_node else None,
+            "parent_score_vector": root_node.score_vector if root_node else None,
             "last_strategy": state.get("last_strategy"),
             "messages": state.get("messages", []),
             "best_nodes": [

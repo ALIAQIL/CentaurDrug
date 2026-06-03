@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>CentaurDrug</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <section class="workspace">
+        <header class="topbar">
+          <div>
+            <h1>CentaurDrug</h1>
+            <p>ADMET-guided lead optimization</p>
+          </div>
+          <div class="status-pill" id="apiStatus">Checking API</div>
+        </header>
+
+        <section class="control-band" aria-label="Molecule controls">
+          <label class="field field-wide">
+            <span>SMILES</span>
+            <input
+              id="smilesInput"
+              type="text"
+              spellcheck="false"
+              value="CC(=O)Oc1ccccc1C(=O)O"
+            />
+          </label>
+
+          <label class="field">
+            <span>Depth</span>
+            <input id="depthInput" type="number" min="0" max="4" value="1" />
+          </label>
+
+          <label class="field">
+            <span>Beam</span>
+            <input id="beamInput" type="number" min="1" max="20" value="3" />
+          </label>
+
+          <label class="field">
+            <span>Candidates</span>
+            <input id="candidateInput" type="number" min="1" max="100" value="8" />
+          </label>
+
+          <div class="button-row">
+            <button id="evaluateBtn" type="button">Evaluate</button>
+            <button id="optimizeBtn" type="button" class="primary">Optimize</button>
+          </div>
+        </section>
+
+        <section class="content-grid">
+          <section class="panel evaluation-panel">
+            <div class="panel-head">
+              <h2>Evaluation</h2>
+              <span id="decisionBadge" class="badge muted">Idle</span>
+            </div>
+            <div id="evaluationSummary" class="summary-list"></div>
+            <div id="riskList" class="tag-row"></div>
+          </section>
+
+          <section class="panel candidates-panel">
+            <div class="panel-head">
+              <h2>Candidates</h2>
+              <span id="candidateCount" class="badge muted">0</span>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>SMILES</th>
+                    <th>Transform</th>
+                    <th>Score</th>
+                    <th>Delta</th>
+                    <th>Decision</th>
+                  </tr>
+                </thead>
+                <tbody id="candidateTable"></tbody>
+              </table>
+            </div>
+          </section>
+
+          <section class="panel detail-panel">
+            <div class="panel-head">
+              <h2>Candidate Detail</h2>
+              <span id="selectedBadge" class="badge muted">None</span>
+            </div>
+            <div id="candidateDetail" class="detail-empty">Select a candidate row.</div>
+          </section>
+
+          <section class="panel tree-panel">
+            <div class="panel-head">
+              <h2>Search Tree</h2>
+              <span id="treeCount" class="badge muted">0 nodes</span>
+            </div>
+            <div id="treeView" class="tree-view"></div>
+          </section>
+
+          <section class="panel chat-panel">
+            <div class="panel-head">
+              <h2>Copilot Chat</h2>
+              <span id="chatMode" class="badge muted">Ready</span>
+            </div>
+            <div id="chatMessages" class="chat-messages"></div>
+            <div id="promptChips" class="prompt-chips"></div>
+            <form id="chatForm" class="chat-form">
+              <input
+                id="chatInput"
+                type="text"
+                placeholder="Ask about the current molecule or selected candidate"
+                autocomplete="off"
+              />
+              <button id="chatSendBtn" type="submit">Send</button>
+            </form>
+          </section>
+        </section>
+      </section>
+    </main>
+
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+    <script src="/static/app.js"></script>
+  </body>
+</html>
