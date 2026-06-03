@@ -39,6 +39,12 @@ from src.models.metrics import (
     classification_metrics,
     regression_metrics,
 )
+from src.models.plots import (
+    build_dataset_summary,
+    collect_split_predictions,
+    save_training_plots,
+    write_dataset_summary,
+)
 from src.models.splitting import (
     add_scaffolds,
     assert_no_scaffold_leakage,
@@ -720,6 +726,20 @@ def train_dataset(
         splits,
         featurizer,
     )
+    predictions = collect_split_predictions(
+        model=model,
+        task_type=task_type,
+        splits=splits,
+        featurizer=featurizer,
+    )
+    dataset_summary = build_dataset_summary(
+        dataset_name=dataset_name,
+        task_type=task_type,
+        raw_df=raw_df,
+        valid_df=valid_df,
+        rejected_df=rejected_df,
+        splits=splits,
+    )
 
     logger.info("Metrics:\n%s", json.dumps(metrics, indent=2))
 
@@ -727,6 +747,8 @@ def train_dataset(
     featurizer_path = artifact_dir / "featurizer.joblib"
     metrics_path = artifact_dir / "metrics.json"
     metadata_path = artifact_dir / "metadata.json"
+    predictions_path = artifact_dir / "predictions.csv"
+    dataset_summary_path = artifact_dir / "dataset_summary.json"
 
     joblib.dump(model, model_path)
     joblib.dump(featurizer, featurizer_path)
@@ -734,6 +756,21 @@ def train_dataset(
     metrics_path.write_text(
         json.dumps(metrics, indent=2),
         encoding="utf-8",
+    )
+    predictions.to_csv(
+        predictions_path,
+        index=False,
+    )
+    write_dataset_summary(
+        dataset_summary,
+        dataset_summary_path,
+    )
+    plot_paths = save_training_plots(
+        splits=splits,
+        task_type=task_type,
+        metrics=metrics,
+        predictions=predictions,
+        artifact_dir=artifact_dir,
     )
 
     if config.get("applicability_domain", {}).get("enabled", True):
@@ -776,8 +813,14 @@ def train_dataset(
             "training_fps": "training_fps.joblib",
             "training_smiles": "training_smiles.joblib",
             "metrics": "metrics.json",
+            "predictions": "predictions.csv",
+            "dataset_summary": "dataset_summary.json",
             "split_report": "split_report.csv",
             "rejections": "rejected_molecules.csv",
+            "plots": [
+                path.relative_to(artifact_dir).as_posix()
+                for path in plot_paths
+            ],
         },
         "inference_contract": {
             "valid_status": "ok",
@@ -846,6 +889,8 @@ def train_dataset(
                     "featurizer.joblib",
                     "metrics.json",
                     "metadata.json",
+                    "predictions.csv",
+                    "dataset_summary.json",
                     "split_report.csv",
                     "rejected_molecules.csv",
                     "training_fps.joblib",
@@ -855,6 +900,14 @@ def train_dataset(
 
                     if path.exists():
                         mlflow.log_artifact(str(path))
+
+                plots_dir = artifact_dir / "plots"
+
+                if plots_dir.exists():
+                    mlflow.log_artifacts(
+                        str(plots_dir),
+                        artifact_path="plots",
+                    )
 
     logger.info("Training completed. Artifacts saved to %s", artifact_dir)
 

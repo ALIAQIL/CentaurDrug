@@ -7,6 +7,7 @@ stages:
       - src/models/datasets.py
       - src/models/featurizers.py
       - src/models/metrics.py
+      - src/models/plots.py
       - src/models/splitting.py
       - src/models/train_admet_xgboost.py
       - src/models/validation.py
@@ -14,10 +15,13 @@ stages:
       - models/admet_xgboost/Solubility_AqSolDB/model.joblib
       - models/admet_xgboost/Solubility_AqSolDB/featurizer.joblib
       - models/admet_xgboost/Solubility_AqSolDB/metadata.json
+      - models/admet_xgboost/Solubility_AqSolDB/dataset_summary.json
+      - models/admet_xgboost/Solubility_AqSolDB/predictions.csv
       - models/admet_xgboost/Solubility_AqSolDB/split_report.csv
       - models/admet_xgboost/Solubility_AqSolDB/rejected_molecules.csv
       - models/admet_xgboost/Solubility_AqSolDB/training_fps.joblib
       - models/admet_xgboost/Solubility_AqSolDB/training_smiles.joblib
+      - models/admet_xgboost/Solubility_AqSolDB/plots
     metrics:
       - models/admet_xgboost/Solubility_AqSolDB/metrics.json:
           cache: false
@@ -30,6 +34,7 @@ stages:
       - src/models/datasets.py
       - src/models/featurizers.py
       - src/models/metrics.py
+      - src/models/plots.py
       - src/models/splitting.py
       - src/models/train_admet_xgboost.py
       - src/models/validation.py
@@ -37,10 +42,13 @@ stages:
       - models/admet_xgboost/Lipophilicity_AstraZeneca/model.joblib
       - models/admet_xgboost/Lipophilicity_AstraZeneca/featurizer.joblib
       - models/admet_xgboost/Lipophilicity_AstraZeneca/metadata.json
+      - models/admet_xgboost/Lipophilicity_AstraZeneca/dataset_summary.json
+      - models/admet_xgboost/Lipophilicity_AstraZeneca/predictions.csv
       - models/admet_xgboost/Lipophilicity_AstraZeneca/split_report.csv
       - models/admet_xgboost/Lipophilicity_AstraZeneca/rejected_molecules.csv
       - models/admet_xgboost/Lipophilicity_AstraZeneca/training_fps.joblib
       - models/admet_xgboost/Lipophilicity_AstraZeneca/training_smiles.joblib
+      - models/admet_xgboost/Lipophilicity_AstraZeneca/plots
     metrics:
       - models/admet_xgboost/Lipophilicity_AstraZeneca/metrics.json:
           cache: false
@@ -53,6 +61,7 @@ stages:
       - src/models/datasets.py
       - src/models/featurizers.py
       - src/models/metrics.py
+      - src/models/plots.py
       - src/models/splitting.py
       - src/models/train_admet_xgboost.py
       - src/models/validation.py
@@ -60,10 +69,13 @@ stages:
       - models/admet_xgboost/AMES/model.joblib
       - models/admet_xgboost/AMES/featurizer.joblib
       - models/admet_xgboost/AMES/metadata.json
+      - models/admet_xgboost/AMES/dataset_summary.json
+      - models/admet_xgboost/AMES/predictions.csv
       - models/admet_xgboost/AMES/split_report.csv
       - models/admet_xgboost/AMES/rejected_molecules.csv
       - models/admet_xgboost/AMES/training_fps.joblib
       - models/admet_xgboost/AMES/training_smiles.joblib
+      - models/admet_xgboost/AMES/plots
     metrics:
       - models/admet_xgboost/AMES/metrics.json:
           cache: false
@@ -76,6 +88,7 @@ stages:
       - src/models/datasets.py
       - src/models/featurizers.py
       - src/models/metrics.py
+      - src/models/plots.py
       - src/models/splitting.py
       - src/models/train_admet_xgboost.py
       - src/models/validation.py
@@ -83,10 +96,13 @@ stages:
       - models/admet_xgboost/hERG/model.joblib
       - models/admet_xgboost/hERG/featurizer.joblib
       - models/admet_xgboost/hERG/metadata.json
+      - models/admet_xgboost/hERG/dataset_summary.json
+      - models/admet_xgboost/hERG/predictions.csv
       - models/admet_xgboost/hERG/split_report.csv
       - models/admet_xgboost/hERG/rejected_molecules.csv
       - models/admet_xgboost/hERG/training_fps.joblib
       - models/admet_xgboost/hERG/training_smiles.joblib
+      - models/admet_xgboost/hERG/plots
     metrics:
       - models/admet_xgboost/hERG/metrics.json:
           cache: false
@@ -99,6 +115,7 @@ stages:
       - src/models/datasets.py
       - src/models/featurizers.py
       - src/models/metrics.py
+      - src/models/plots.py
       - src/models/splitting.py
       - src/models/train_admet_xgboost.py
       - src/models/validation.py
@@ -106,10 +123,13 @@ stages:
       - models/admet_xgboost/CYP3A4_Veith/model.joblib
       - models/admet_xgboost/CYP3A4_Veith/featurizer.joblib
       - models/admet_xgboost/CYP3A4_Veith/metadata.json
+      - models/admet_xgboost/CYP3A4_Veith/dataset_summary.json
+      - models/admet_xgboost/CYP3A4_Veith/predictions.csv
       - models/admet_xgboost/CYP3A4_Veith/split_report.csv
       - models/admet_xgboost/CYP3A4_Veith/rejected_molecules.csv
       - models/admet_xgboost/CYP3A4_Veith/training_fps.joblib
       - models/admet_xgboost/CYP3A4_Veith/training_smiles.joblib
+      - models/admet_xgboost/CYP3A4_Veith/plots
     metrics:
       - models/admet_xgboost/CYP3A4_Veith/metrics.json:
           cache: false

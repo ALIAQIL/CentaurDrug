@@ -1,7 +1,10 @@
-.PHONY: test train-sol train-lipo train-ames train-herg train-cyp3a4 train-phase1 predict-sol
+.PHONY: test verify-mlflow train-sol train-lipo train-ames train-herg train-cyp3a4 train-phase1 predict-sol
 
 test:
 	uv run pytest -q
+
+verify-mlflow:
+	uv run python -m src.mlops.verify_mlflow --config configs/training.yaml
 
 train-sol:
 	uv run python -m src.models.train_admet_xgboost --config configs/training.yaml --dataset Solubility_AqSolDB

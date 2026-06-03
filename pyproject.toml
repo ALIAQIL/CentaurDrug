@@ -1,7 +1,7 @@
 [project]
 name = "centaurdrug"
 version = "0.1.0"
-description = "Add your description here"
+description = "AI medicinal chemistry copilot for human-in-the-loop lead optimization"
 readme = "README.md"
 requires-python = ">=3.12, <3.14"
 dependencies = [
