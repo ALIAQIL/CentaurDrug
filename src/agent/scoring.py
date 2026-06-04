@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Dict
+from typing import Any, Callable, Dict, Iterable, List, TypeVar
 
 from rdkit import Chem, DataStructs
 from rdkit.Chem import Descriptors, Lipinski, rdFingerprintGenerator
@@ -11,6 +11,24 @@ MORGAN_GENERATOR = rdFingerprintGenerator.GetMorganGenerator(
     radius=2,
     fpSize=2048,
 )
+
+SCORE_WEIGHTS = {
+    "solubility": 1.2,
+    "lipophilicity": 1.0,
+    "ames_safety": 1.5,
+    "herg_safety": 1.5,
+    "cyp3a4_safety": 1.0,
+    "qed": 0.8,
+    "lipinski": 0.8,
+    "veber": 0.5,
+    "pains": 1.0,
+    "brenk": 0.8,
+    "applicability_domain": 0.8,
+    "scaffold_preservation": 1.2,
+    "synthetic_accessibility": 0.8,
+}
+
+T = TypeVar("T")
 
 
 def clamp(value: float, low: float = 0.0, high: float = 1.0) -> float:
@@ -73,6 +91,13 @@ def extract_ad_score(admet_predictions: Dict[str, Any]) -> float:
         return 0.0
 
     return clamp(sum(scores) / len(scores))
+
+
+def rule_pass_score(value: Any) -> float:
+    if value is None:
+        return 0.5
+
+    return 1.0 if bool(value) else 0.0
 
 
 def compute_scaffold_preservation(
@@ -260,12 +285,20 @@ def build_score_vector(
                 "cyp3a4_safety": 0.0,
                 "qed": 0.0,
                 "lipinski": 0.0,
+                "veber": 0.0,
                 "pains": 0.0,
+                "brenk": 0.0,
                 "applicability_domain": 0.0,
                 "scaffold_preservation": 0.0,
                 "synthetic_accessibility": 0.0,
             },
             "scalar_score": 0.0,
+            "score_metadata": {
+                "scale": "0_to_1",
+                "weighted_sum": 0.0,
+                "max_weighted_sum": sum(SCORE_WEIGHTS.values()),
+                "weights": SCORE_WEIGHTS,
+            },
         }
 
     rules = evaluation.get("rules", {})
@@ -295,7 +328,9 @@ def build_score_vector(
         "cyp3a4_probability": cyp3a4.get("probability_positive"),
         "qed": rules.get("qed"),
         "lipinski_passed": rules.get("lipinski", {}).get("passed"),
+        "veber_passed": rules.get("veber", {}).get("passed"),
         "pains_passed": rules.get("pains", {}).get("passed"),
+        "brenk_passed": rules.get("brenk", {}).get("passed"),
         "scaffold": scaffold,
         "synthetic_accessibility": synthetic_accessibility,
     }
@@ -307,50 +342,57 @@ def build_score_vector(
         "herg_safety": probability_to_safety(raw["herg_probability"]),
         "cyp3a4_safety": probability_to_safety(raw["cyp3a4_probability"]),
         "qed": clamp(float(raw["qed"])) if raw["qed"] is not None else 0.5,
-        "lipinski": 1.0 if raw["lipinski_passed"] else 0.0,
-        "pains": 1.0 if raw["pains_passed"] else 0.0,
+        "lipinski": rule_pass_score(raw["lipinski_passed"]),
+        "veber": rule_pass_score(raw["veber_passed"]),
+        "pains": rule_pass_score(raw["pains_passed"]),
+        "brenk": rule_pass_score(raw["brenk_passed"]),
         "applicability_domain": extract_ad_score(admet),
         "scaffold_preservation": float(scaffold["preservation_score"]),
         "synthetic_accessibility": float(synthetic_accessibility["score"]),
     }
 
+    weighted_sum = compute_weighted_sum(normalized)
     scalar_score = compute_scalar_score(normalized)
 
     return {
         "raw": raw,
         "normalized": normalized,
         "scalar_score": scalar_score,
+        "score_metadata": {
+            "scale": "0_to_1",
+            "weighted_sum": weighted_sum,
+            "max_weighted_sum": sum(SCORE_WEIGHTS.values()),
+            "weights": SCORE_WEIGHTS,
+        },
     }
+
+
+def compute_weighted_sum(normalized: Dict[str, float]) -> float:
+    """
+    Raw weighted sum before user-facing normalization.
+    """
+
+    return float(
+        sum(
+            weight * normalized.get(key, 0.0)
+            for key, weight in SCORE_WEIGHTS.items()
+        )
+    )
 
 
 def compute_scalar_score(normalized: Dict[str, float]) -> float:
     """
-    Weighted score for ranking.
+    Weighted score for ranking on a 0-1 scale.
 
     The LLM should receive the vector.
     The optimizer can use the scalar for sorting.
     """
 
-    weights = {
-        "solubility": 1.2,
-        "lipophilicity": 1.0,
-        "ames_safety": 1.5,
-        "herg_safety": 1.5,
-        "cyp3a4_safety": 1.0,
-        "qed": 0.8,
-        "lipinski": 0.8,
-        "pains": 1.0,
-        "applicability_domain": 0.8,
-        "scaffold_preservation": 1.2,
-        "synthetic_accessibility": 0.8,
-    }
+    max_weighted_sum = sum(SCORE_WEIGHTS.values())
+    if max_weighted_sum <= 0:
+        return 0.0
 
-    total = 0.0
-
-    for key, weight in weights.items():
-        total += weight * normalized.get(key, 0.0)
-
-    return float(total)
+    return clamp(compute_weighted_sum(normalized) / max_weighted_sum)
 
 
 def compare_score_vectors(
@@ -394,7 +436,9 @@ def build_candidate_explanation(
         "cyp3a4_safety": "CYP3A4 safety",
         "qed": "QED drug-likeness",
         "lipinski": "Lipinski compliance",
+        "veber": "Veber oral-bioavailability filter",
         "pains": "PAINS filter status",
+        "brenk": "Brenk structural-alert filter",
         "applicability_domain": "prediction applicability domain",
         "scaffold_preservation": "scaffold preservation",
         "synthetic_accessibility": "synthetic accessibility",
@@ -447,3 +491,51 @@ def build_candidate_explanation(
         "scaffold": scaffold,
         "synthetic_accessibility": sa,
     }
+
+
+def smiles_similarity(smiles_a: str | None, smiles_b: str | None) -> float:
+    if not smiles_a or not smiles_b:
+        return 0.0
+
+    mol_a = Chem.MolFromSmiles(smiles_a)
+    mol_b = Chem.MolFromSmiles(smiles_b)
+
+    if mol_a is None or mol_b is None:
+        return 0.0
+
+    fp_a = MORGAN_GENERATOR.GetFingerprint(mol_a)
+    fp_b = MORGAN_GENERATOR.GetFingerprint(mol_b)
+    return float(DataStructs.TanimotoSimilarity(fp_a, fp_b))
+
+
+def select_diverse_items(
+    items: Iterable[T],
+    *,
+    top_k: int,
+    smiles_getter: Callable[[T], str | None],
+    score_getter: Callable[[T], float],
+    similarity_threshold: float = 0.85,
+) -> List[T]:
+    ranked = sorted(items, key=score_getter, reverse=True)
+    selected: List[T] = []
+
+    for item in ranked:
+        smiles = smiles_getter(item)
+        if all(
+            smiles_similarity(smiles, smiles_getter(existing))
+            <= similarity_threshold
+            for existing in selected
+        ):
+            selected.append(item)
+
+        if len(selected) >= top_k:
+            return selected
+
+    for item in ranked:
+        if item not in selected:
+            selected.append(item)
+
+        if len(selected) >= top_k:
+            break
+
+    return selected

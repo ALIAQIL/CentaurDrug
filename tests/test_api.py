@@ -21,11 +21,37 @@ def test_health_endpoint():
     assert response.json()["status"] == "ok"
 
 
+def test_version_endpoint():
+    response = client.get("/version")
+
+    assert response.status_code == 200
+    assert response.json()["api_version"] == main.app.version
+
+
+def test_metrics_endpoint():
+    response = client.get("/metrics")
+
+    assert response.status_code == 200
+    assert "centaurdrug_requests_total" in response.text
+
+
 def test_rules_endpoint():
     response = client.post("/rules", json={"smiles": "CCO"})
 
     assert response.status_code == 200
     assert response.json()["valid"] is True
+    assert "veber" in response.json()
+    assert "brenk" in response.json()
+
+
+def test_rejects_unapproved_model_root():
+    response = client.post(
+        "/evaluate",
+        json={"smiles": "CCO", "model_root": "../outside"},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "model_root is not allowed for this API."
 
 
 def test_evaluate_endpoint_uses_panel_evaluator(monkeypatch):
@@ -47,6 +73,19 @@ def test_evaluate_endpoint_uses_panel_evaluator(monkeypatch):
         "canonical_smiles": "CCO",
         "final_decision": {"decision": "pass"},
     }
+
+
+def test_evaluate_endpoint_hides_internal_errors(monkeypatch):
+    class BrokenEvaluator:
+        def evaluate_molecule(self, smiles):
+            raise RuntimeError("secret filesystem detail")
+
+    monkeypatch.setattr(main, "get_evaluator", lambda model_root: BrokenEvaluator())
+
+    response = client.post("/evaluate", json={"smiles": "CCO"})
+
+    assert response.status_code == 500
+    assert "secret filesystem detail" not in response.json()["detail"]
 
 
 def test_optimize_endpoint_runs_agent_graph(monkeypatch):
@@ -76,6 +115,34 @@ def test_optimize_endpoint_runs_agent_graph(monkeypatch):
     assert data["status"] == "ok"
     assert data["input_smiles"] == "CCO"
     assert data["max_depth"] == 1
+
+
+def test_optimize_endpoint_passes_constraints(monkeypatch):
+    def fake_run_graph(**kwargs):
+        return {
+            "status": "ok",
+            "constraints": kwargs["constraints"],
+            "best_candidate_nodes": [],
+        }
+
+    monkeypatch.setattr(main, "run_graph", fake_run_graph)
+
+    response = client.post(
+        "/optimize",
+        json={
+            "smiles": "CCO",
+            "constraints": {
+                "avoid_substructures": ["[N+](=O)[O-]"],
+                "max_mw": 500,
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["constraints"] == {
+        "avoid_substructures": ["[N+](=O)[O-]"],
+        "max_mw": 500.0,
+    }
 
 
 def test_chat_endpoint_fallback(monkeypatch):

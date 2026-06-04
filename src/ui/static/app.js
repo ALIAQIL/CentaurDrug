@@ -13,6 +13,8 @@ const els = {
   depthInput: document.getElementById("depthInput"),
   beamInput: document.getElementById("beamInput"),
   candidateInput: document.getElementById("candidateInput"),
+  maxMwInput: document.getElementById("maxMwInput"),
+  avoidInput: document.getElementById("avoidInput"),
   evaluateBtn: document.getElementById("evaluateBtn"),
   optimizeBtn: document.getElementById("optimizeBtn"),
   decisionBadge: document.getElementById("decisionBadge"),
@@ -71,9 +73,18 @@ function showToast(message) {
   window.setTimeout(() => els.toast.classList.remove("show"), 3200);
 }
 
-function setBusy(isBusy) {
+function setBusy(isBusy, action = null) {
   els.evaluateBtn.disabled = isBusy;
   els.optimizeBtn.disabled = isBusy;
+  els.evaluateBtn.classList.toggle("is-loading", isBusy && action === "evaluate");
+  els.optimizeBtn.classList.toggle("is-loading", isBusy && action === "optimize");
+
+  if (isBusy) {
+    els.apiStatus.textContent = action === "optimize" ? "Optimizing" : "Evaluating";
+    els.apiStatus.className = "status-pill busy";
+  } else {
+    checkHealth();
+  }
 }
 
 function setChatBusy(isBusy) {
@@ -86,19 +97,69 @@ function setChatBusy(isBusy) {
 }
 
 async function postJson(url, payload) {
-  const response = await fetch(url, {
-    method: "POST",
-    headers: {"Content-Type": "application/json"},
-    body: JSON.stringify(payload),
-  });
+  let response;
+
+  try {
+    response = await fetch(url, {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify(payload),
+    });
+  } catch {
+    const error = new Error("The API is not reachable.");
+    error.kind = "network";
+    throw error;
+  }
 
   const data = await response.json().catch(() => ({}));
 
   if (!response.ok) {
-    throw new Error(data.detail || `Request failed with ${response.status}`);
+    const detail = typeof data.detail === "string" ? data.detail : null;
+    const error = new Error(detail || `Request failed with ${response.status}`);
+    error.status = response.status;
+    throw error;
   }
 
   return data;
+}
+
+function friendlyErrorMessage(error, fallback) {
+  if (error?.kind === "network") {
+    return "The API is not reachable. Check that the app server is running.";
+  }
+
+  if (error?.status === 400 && error.message) {
+    return error.message;
+  }
+
+  if (error?.status === 422) {
+    return "Check the input values and try again.";
+  }
+
+  return fallback;
+}
+
+function parseAvoidSubstructures() {
+  return els.avoidInput.value
+    .split(/[,\n;]/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function buildConstraintsPayload() {
+  const constraints = {};
+  const maxMw = Number(els.maxMwInput.value);
+  const avoidSubstructures = parseAvoidSubstructures();
+
+  if (Number.isFinite(maxMw) && maxMw > 0) {
+    constraints.max_mw = maxMw;
+  }
+
+  if (avoidSubstructures.length) {
+    constraints.avoid_substructures = avoidSubstructures;
+  }
+
+  return constraints;
 }
 
 function requestPayload() {
@@ -108,6 +169,7 @@ function requestPayload() {
     beam_width: Number(els.beamInput.value),
     max_candidates_per_node: Number(els.candidateInput.value),
     include_full_tree: false,
+    constraints: buildConstraintsPayload(),
   };
 }
 
@@ -124,7 +186,9 @@ function renderEvaluation(evaluation) {
   const metrics = [
     ["QED", rules.qed],
     ["Lipinski", rules.lipinski?.passed],
+    ["Veber", rules.veber?.passed],
     ["PAINS", rules.pains?.passed],
+    ["Brenk", rules.brenk?.passed],
     ["Solubility", admet.solubility?.prediction],
     ["Lipophilicity", admet.lipophilicity?.prediction],
     ["AMES risk", admet.ames?.probability_positive],
@@ -150,6 +214,70 @@ function renderEvaluation(evaluation) {
     : `<span class="tag">no major risk flags</span>`;
 }
 
+function renderRulePreview(rules, smiles) {
+  state.evaluation = null;
+
+  if (!rules?.valid) {
+    els.decisionBadge.textContent = "Invalid";
+    els.decisionBadge.className = "badge reject";
+    els.evaluationSummary.innerHTML = "";
+    els.riskList.innerHTML = `<span class="tag risk">${escapeHtml(
+      rules?.reason || "invalid SMILES",
+    )}</span>`;
+    return;
+  }
+
+  els.decisionBadge.textContent = `Rules ${rules.decision}`;
+  els.decisionBadge.className = `badge ${cssClassForDecision(rules.decision)}`;
+
+  const metrics = [
+    ["QED", rules.qed],
+    ["Lipinski", rules.lipinski?.passed],
+    ["Veber", rules.veber?.passed],
+    ["PAINS", rules.pains?.passed],
+    ["Brenk", rules.brenk?.passed],
+  ];
+
+  els.evaluationSummary.innerHTML = metrics
+    .map(([label, value]) => {
+      const display = typeof value === "boolean" ? (value ? "Pass" : "Fail") : fmtNumber(value);
+      return `
+        <div class="metric">
+          <span>${escapeHtml(label)}</span>
+          <strong>${escapeHtml(display)}</strong>
+        </div>
+      `;
+    })
+    .join("");
+
+  els.riskList.innerHTML = `
+    <span class="tag">ADMET not refreshed</span>
+    <span class="tag">${escapeHtml(smiles)}</span>
+  `;
+}
+
+function markEvaluationStale(smiles) {
+  state.evaluation = null;
+  state.optimization = null;
+  state.selectedCandidateId = null;
+
+  els.decisionBadge.textContent = "Stale";
+  els.decisionBadge.className = "badge stale";
+  els.riskList.innerHTML = `
+    <span class="tag">drug input changed</span>
+    <span class="tag">${escapeHtml(smiles)}</span>
+  `;
+  els.candidateCount.textContent = "0";
+  els.candidateTable.innerHTML = `
+    <tr>
+      <td colspan="6">Run Optimize to generate candidates for the current molecule.</td>
+    </tr>
+  `;
+  els.treeCount.textContent = "0 nodes";
+  els.treeView.innerHTML = "";
+  renderCandidateDetail(null);
+}
+
 function setParentChatContext(evaluation, autoPrompt = true) {
   const smiles =
     evaluation?.canonical_smiles ||
@@ -172,7 +300,17 @@ function setParentChatContext(evaluation, autoPrompt = true) {
   );
 }
 
-function renderCandidates(result) {
+function reviewLabel(status) {
+  const labels = {
+    pending: "Pending",
+    approved: "Approved",
+    rejected: "Rejected",
+    needs_review: "Needs Review",
+  };
+  return labels[status] || "Pending";
+}
+
+function renderCandidates(result, preferredNodeId = state.selectedCandidateId) {
   state.optimization = result;
   const candidates = result.best_candidate_nodes || [];
   els.candidateCount.textContent = String(candidates.length);
@@ -180,26 +318,38 @@ function renderCandidates(result) {
   if (!candidates.length) {
     els.candidateTable.innerHTML = `
       <tr>
-        <td colspan="5">No candidates generated.</td>
+        <td colspan="6">No candidates generated.</td>
       </tr>
     `;
     renderCandidateDetail(null);
     return;
   }
 
-  state.selectedCandidateId = candidates[0].node_id;
+  state.selectedCandidateId = candidates.some(
+    (candidate) => candidate.node_id === preferredNodeId,
+  )
+    ? preferredNodeId
+    : candidates[0].node_id;
 
   els.candidateTable.innerHTML = candidates
     .map((candidate) => {
       const selected = candidate.node_id === state.selectedCandidateId ? " selected" : "";
       const decision = candidate.decision || "n/a";
+      const reviewStatus = candidate.human_status || "pending";
       return `
-        <tr class="candidate-row${selected}" data-node-id="${escapeHtml(candidate.node_id)}">
+        <tr
+          class="candidate-row${selected}"
+          data-node-id="${escapeHtml(candidate.node_id)}"
+          tabindex="0"
+          role="button"
+          aria-label="Select candidate ${escapeHtml(candidate.smiles)}"
+        >
           <td class="smiles-cell">${escapeHtml(candidate.smiles)}</td>
           <td>${escapeHtml(candidate.transformation || "root")}</td>
           <td>${fmtNumber(candidate.scalar_score)}</td>
           <td>${fmtSigned(candidate.delta_vs_parent)}</td>
           <td><span class="badge ${cssClassForDecision(decision)}">${escapeHtml(decision)}</span></td>
+          <td><span class="badge ${escapeHtml(reviewStatus)}">${escapeHtml(reviewLabel(reviewStatus))}</span></td>
         </tr>
       `;
     })
@@ -212,6 +362,12 @@ function renderCandidates(result) {
         .querySelectorAll(".candidate-row")
         .forEach((item) => item.classList.toggle("selected", item === row));
       renderCandidateDetail(findCandidate(row.dataset.nodeId));
+    });
+    row.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        row.click();
+      }
     });
   });
 
@@ -240,6 +396,14 @@ function renderCandidateDetail(candidate) {
   const scoreVector = candidate.score_vector || {};
   const scaffold = candidate.scaffold || {};
   const sa = candidate.synthetic_accessibility || {};
+  const constraints = candidate.constraints || {};
+  const constraintStatus =
+    constraints.passed === undefined
+      ? "not applied"
+      : constraints.passed
+        ? "passed"
+        : "violated";
+  const reviewStatus = candidate.human_status || "pending";
 
   els.candidateDetail.innerHTML = `
     <div>
@@ -263,6 +427,16 @@ function renderCandidateDetail(candidate) {
         <span>Synthesis</span>
         <strong>${escapeHtml(sa.interpretation || "n/a")}</strong>
       </div>
+      <div class="metric">
+        <span>Review</span>
+        <strong>${escapeHtml(reviewLabel(reviewStatus))}</strong>
+      </div>
+    </div>
+
+    <div class="review-actions" aria-label="Human review actions">
+      <button type="button" data-review-status="approved">Approve</button>
+      <button type="button" data-review-status="needs_review">Needs Review</button>
+      <button type="button" data-review-status="rejected">Reject</button>
     </div>
 
     <div class="score-grid">
@@ -299,9 +473,45 @@ function renderCandidateDetail(candidate) {
         <li>Rings: ${escapeHtml(sa.features?.ring_count ?? "n/a")}</li>
       </ul>
     </div>
+
+    <div class="list-block">
+      <h3>Constraints</h3>
+      <ul>
+        <li>Status: ${escapeHtml(constraintStatus)}</li>
+        <li>Violations: ${escapeHtml((constraints.violations || []).join(", ") || "none")}</li>
+      </ul>
+    </div>
   `;
 
+  wireReviewActions(candidate.node_id);
   setCandidateChatContext(candidate);
+}
+
+function wireReviewActions(nodeId) {
+  els.candidateDetail
+    .querySelectorAll("[data-review-status]")
+    .forEach((button) => {
+      button.addEventListener("click", () => {
+        setCandidateReviewStatus(nodeId, button.dataset.reviewStatus);
+      });
+    });
+}
+
+function setCandidateReviewStatus(nodeId, status) {
+  const candidate = findCandidate(nodeId);
+  if (!candidate) {
+    return;
+  }
+
+  candidate.human_status = status;
+
+  const treeNode = state.optimization?.tree_summary?.nodes?.[nodeId];
+  if (treeNode) {
+    treeNode.human_status = status;
+  }
+
+  renderCandidates(state.optimization, nodeId);
+  showToast(`Candidate marked ${reviewLabel(status)}.`);
 }
 
 function setCandidateChatContext(candidate) {
@@ -379,7 +589,11 @@ function renderTree(result) {
       <div class="tree-node depth-${Number(node.depth) || 0}">
         <strong>${escapeHtml(node.transformation || "parent")} - ${fmtNumber(node.scalar_score)}</strong>
         <span class="mono">${escapeHtml(node.smiles)}</span>
-        <span>depth ${escapeHtml(node.depth)} | ${escapeHtml(node.decision || "n/a")}</span>
+        <span>
+          depth ${escapeHtml(node.depth)}
+          | ${escapeHtml(node.decision || "n/a")}
+          | ${escapeHtml(reviewLabel(node.human_status || "pending"))}
+        </span>
       </div>
     `)
     .join("");
@@ -392,14 +606,19 @@ async function handleEvaluate() {
     return;
   }
 
-  setBusy(true);
+  setBusy(true, "evaluate");
   try {
     const evaluation = await postJson("/evaluate", {smiles});
     renderEvaluation(evaluation);
     setParentChatContext(evaluation, true);
     showToast("Evaluation complete.");
   } catch (error) {
-    showToast(error.message);
+    showToast(
+      friendlyErrorMessage(
+        error,
+        "Evaluation failed. Check the molecule and try again.",
+      ),
+    );
   } finally {
     setBusy(false);
   }
@@ -412,7 +631,7 @@ async function handleOptimize() {
     return;
   }
 
-  setBusy(true);
+  setBusy(true, "optimize");
   try {
     const result = await postJson("/optimize", payload);
     state.optimization = result;
@@ -422,7 +641,12 @@ async function handleOptimize() {
     renderTree(result);
     showToast("Optimization complete.");
   } catch (error) {
-    showToast(error.message);
+    showToast(
+      friendlyErrorMessage(
+        error,
+        "Optimization failed. Check the molecule and settings, then try again.",
+      ),
+    );
   } finally {
     setBusy(false);
   }
@@ -516,7 +740,13 @@ async function sendChatPrompt(prompt, options = {}) {
     els.chatMode.textContent = response.mode === "gemini" ? "Gemini" : "Fallback";
     els.chatMode.className = "badge muted";
   } catch (error) {
-    addChatMessage("assistant", `I could not answer that request: ${error.message}`);
+    addChatMessage(
+      "assistant",
+      friendlyErrorMessage(
+        error,
+        "I could not answer that request right now.",
+      ),
+    );
   } finally {
     setChatBusy(false);
   }
@@ -530,6 +760,24 @@ function handleChatSubmit(event) {
 }
 
 let smilesChangeTimer = null;
+let rulesPreviewRequestId = 0;
+
+async function validateRulesPreview(smiles, key) {
+  const requestId = ++rulesPreviewRequestId;
+
+  try {
+    const rules = await postJson("/rules", {smiles});
+    if (requestId !== rulesPreviewRequestId || state.currentChatContextKey !== key) {
+      return;
+    }
+    renderRulePreview(rules, smiles);
+  } catch {
+    if (requestId === rulesPreviewRequestId && state.currentChatContextKey === key) {
+      els.decisionBadge.textContent = "Check failed";
+      els.decisionBadge.className = "badge uncertain";
+    }
+  }
+}
 
 function handleSmilesChange() {
   window.clearTimeout(smilesChangeTimer);
@@ -545,6 +793,7 @@ function handleSmilesChange() {
       return;
     }
 
+    markEvaluationStale(smiles);
     state.currentChatContext = {
       type: "input",
       smiles,
@@ -559,6 +808,8 @@ function handleSmilesChange() {
       "What should I check first?",
       "Run evaluation then summarize the risk profile.",
     ]);
+    validateRulesPreview(smiles, key);
+    sendChatPrompt("Explain this SMILES before evaluation.", {showUser: false});
   }, 900);
 }
 

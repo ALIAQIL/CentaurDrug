@@ -8,10 +8,12 @@ from typing import Any, Dict
 from src.models.predict import ADMETPredictor
 from src.models.validation import validate_smiles
 from src.tools.filters import (
+    brenk_filter,
     is_valid_smiles,
     lipinski_filter,
     pains_filter,
     qed_score,
+    veber_filter,
 )
 
 
@@ -36,16 +38,27 @@ def evaluate_rules(smiles: str) -> dict:
         }
 
     lipinski = lipinski_filter(smiles)
+    veber = veber_filter(smiles)
     pains = pains_filter(smiles)
+    brenk = brenk_filter(smiles)
     qed = qed_score(smiles)
 
-    passed = lipinski["passed"] and pains["passed"] and qed >= 0.35
+    passed = (
+        lipinski["passed"]
+        and veber["passed"]
+        and pains["passed"]
+        and brenk["passed"]
+        and qed >= 0.35
+    )
 
     return {
         "valid": True,
         "lipinski": lipinski,
+        "veber": veber,
         "pains": pains,
+        "brenk": brenk,
         "qed": qed,
+        "qed_threshold": 0.35,
         "decision": "pass" if passed else "reject",
     }
 

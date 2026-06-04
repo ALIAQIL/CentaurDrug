@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+from functools import lru_cache
 from typing import Any, Dict, List, Optional, TypedDict
 
 os.environ.setdefault("LANGCHAIN_TRACING_V2", "false")
@@ -10,11 +11,21 @@ os.environ.setdefault("LANGSMITH_TRACING", "false")
 
 from langgraph.graph import END, START, StateGraph
 
+from src.agent.constraints import evaluate_candidate_constraints
 from src.agent.llm_agent import GeminiStrategyAgent
-from src.agent.scoring import build_candidate_explanation, build_score_vector
+from src.agent.scoring import (
+    build_candidate_explanation,
+    build_score_vector,
+    select_diverse_items,
+)
 from src.agent.search_tree import OptimizationTree
 from src.agent.transformations import generate_candidates
 from src.tools.evaluator import ADMETPanelEvaluator
+
+
+@lru_cache(maxsize=4)
+def get_graph_evaluator(model_root: str) -> ADMETPanelEvaluator:
+    return ADMETPanelEvaluator(model_root=model_root)
 
 
 class OptimizationState(TypedDict, total=False):
@@ -24,6 +35,7 @@ class OptimizationState(TypedDict, total=False):
     beam_width: int
     max_candidates_per_node: int
     include_full_tree: bool
+    constraints: Dict[str, Any]
 
     current_depth: int
     tree: OptimizationTree
@@ -49,7 +61,14 @@ class CentaurDrugGraph:
         graph.add_node("finalize", self.finalize)
 
         graph.add_edge(START, "initialize")
-        graph.add_edge("initialize", "choose_strategy")
+        graph.add_conditional_edges(
+            "initialize",
+            self.should_continue,
+            {
+                "continue": "choose_strategy",
+                "stop": "finalize",
+            },
+        )
         graph.add_edge("choose_strategy", "expand_frontier")
         graph.add_edge("expand_frontier", "select_next_frontier")
 
@@ -68,7 +87,7 @@ class CentaurDrugGraph:
 
     def initialize(self, state: OptimizationState) -> Dict[str, Any]:
         model_root = state.get("model_root", "models/admet_xgboost")
-        self.evaluator = ADMETPanelEvaluator(model_root=model_root)
+        self.evaluator = get_graph_evaluator(model_root)
 
         smiles = state["smiles"]
 
@@ -153,8 +172,10 @@ class CentaurDrugGraph:
         max_candidates_per_node = int(
             state.get("max_candidates_per_node", 20)
         )
+        constraints = state.get("constraints") or {}
 
         new_node_ids = []
+        skipped_by_constraints = 0
         seen_smiles = tree.get_smiles_set()
 
         if self.evaluator is None:
@@ -176,9 +197,19 @@ class CentaurDrugGraph:
                 if candidate.smiles in seen_smiles:
                     continue
 
+                constraint_result = evaluate_candidate_constraints(
+                    candidate.smiles,
+                    constraints=constraints,
+                    reference_smiles=root_smiles,
+                )
+                if not constraint_result["passed"]:
+                    skipped_by_constraints += 1
+                    continue
+
                 evaluation = self.evaluator.evaluate_molecule(
                     candidate.smiles
                 )
+                evaluation["constraints"] = constraint_result
                 node_smiles = evaluation.get(
                     "canonical_smiles",
                     candidate.smiles,
@@ -209,6 +240,7 @@ class CentaurDrugGraph:
             "messages": state.get("messages", [])
             + [
                 f"Expanded frontier and generated {len(new_node_ids)} new nodes."
+                f" Skipped {skipped_by_constraints} candidates by constraints."
             ],
         }
 
@@ -253,7 +285,13 @@ class CentaurDrugGraph:
         tree = state["tree"]
         root_node = tree.get_node(tree.root_id) if tree.root_id else None
         best_nodes = tree.get_best_nodes(top_k=10)
-        best_candidate_nodes = tree.get_best_nodes(top_k=10, min_depth=1)
+        best_candidate_pool = tree.get_best_nodes(top_k=50, min_depth=1)
+        best_candidate_nodes = select_diverse_items(
+            best_candidate_pool,
+            top_k=10,
+            smiles_getter=lambda node: node.smiles,
+            score_getter=lambda node: node.scalar_score,
+        )
 
         final_result = {
             "status": "ok",
@@ -264,6 +302,7 @@ class CentaurDrugGraph:
             "n_candidate_nodes": max(0, len(tree.nodes) - 1),
             "parent_evaluation": root_node.evaluation if root_node else None,
             "parent_score_vector": root_node.score_vector if root_node else None,
+            "constraints": state.get("constraints") or {},
             "last_strategy": state.get("last_strategy"),
             "messages": state.get("messages", []),
             "best_nodes": [
@@ -306,6 +345,7 @@ class CentaurDrugGraph:
                 "synthetic_accessibility": raw.get(
                     "synthetic_accessibility"
                 ),
+                "constraints": node.evaluation.get("constraints"),
             }
         )
 
@@ -365,6 +405,7 @@ def run_graph(
     beam_width: int = 3,
     max_candidates_per_node: int = 20,
     include_full_tree: bool = False,
+    constraints: Dict[str, Any] | None = None,
 ) -> Dict[str, Any]:
     app = CentaurDrugGraph().build()
 
@@ -376,6 +417,7 @@ def run_graph(
             "beam_width": beam_width,
             "max_candidates_per_node": max_candidates_per_node,
             "include_full_tree": include_full_tree,
+            "constraints": constraints or {},
         }
     )
 

@@ -5,7 +5,12 @@ import json
 from pathlib import Path
 from typing import Any, Dict, List
 
-from src.agent.scoring import build_score_vector, compare_score_vectors
+from src.agent.constraints import evaluate_candidate_constraints
+from src.agent.scoring import (
+    build_score_vector,
+    compare_score_vectors,
+    select_diverse_items,
+)
 from src.agent.transformations import generate_candidates
 from src.tools.evaluator import ADMETPanelEvaluator
 
@@ -59,7 +64,9 @@ class MoleculeOptimizer:
         smiles: str,
         max_candidates: int = 50,
         top_k: int = 10,
+        constraints: Dict[str, Any] | None = None,
     ) -> Dict[str, Any]:
+        constraints = constraints or {}
         parent_eval = self.evaluator.evaluate_molecule(smiles)
         parent_reference_smiles = (
             parent_eval.get("canonical_smiles")
@@ -80,7 +87,16 @@ class MoleculeOptimizer:
         evaluated_candidates: List[Dict[str, Any]] = []
 
         for candidate in candidates:
+            constraint_result = evaluate_candidate_constraints(
+                candidate.smiles,
+                constraints=constraints,
+                reference_smiles=parent_reference_smiles,
+            )
+            if not constraint_result["passed"]:
+                continue
+
             evaluation = self.evaluator.evaluate_molecule(candidate.smiles)
+            evaluation["constraints"] = constraint_result
 
             score_vector = build_score_vector(
                 evaluation,
@@ -106,6 +122,12 @@ class MoleculeOptimizer:
             key=lambda x: x["score"],
             reverse=True,
         )
+        top_candidates = select_diverse_items(
+            evaluated_candidates,
+            top_k=top_k,
+            smiles_getter=lambda item: item["smiles"],
+            score_getter=lambda item: item["score"],
+        )
 
         return {
             "status": "ok",
@@ -113,9 +135,10 @@ class MoleculeOptimizer:
             "parent_score": parent_score,
             "parent_score_vector": parent_score_vector,
             "parent_evaluation": parent_eval,
+            "constraints": constraints,
             "n_generated_candidates": len(candidates),
             "n_evaluated_candidates": len(evaluated_candidates),
-            "top_candidates": evaluated_candidates[:top_k],
+            "top_candidates": top_candidates,
         }
 
 

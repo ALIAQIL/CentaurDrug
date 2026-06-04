@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 from typing import Any, Dict, List
 
@@ -13,6 +14,7 @@ from src.agent.knowledge_base import (
 
 
 load_dotenv()
+LOGGER = logging.getLogger(__name__)
 
 
 class TransformationStrategy(BaseModel):
@@ -96,6 +98,8 @@ class GeminiStrategyAgent:
                 model=self.model,
                 temperature=self.temperature,
                 google_api_key=self.api_key,
+                request_timeout=float(os.getenv("GEMINI_REQUEST_TIMEOUT", "12")),
+                retries=1,
             ).with_structured_output(TransformationStrategy)
 
     def choose_strategy(
@@ -116,6 +120,9 @@ class GeminiStrategyAgent:
             return self._sanitize_strategy(result)
 
         except Exception:
+            LOGGER.exception(
+                "Gemini strategy selection failed; using fallback strategy."
+            )
             return fallback_strategy(evaluation_summary)
 
     def _sanitize_strategy(

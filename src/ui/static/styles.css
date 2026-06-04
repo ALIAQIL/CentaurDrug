@@ -36,6 +36,10 @@ input {
 }
 
 button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
   min-height: 40px;
   border: 1px solid var(--line);
   border-radius: 6px;
@@ -63,6 +67,22 @@ button.primary:hover {
 button:disabled {
   cursor: wait;
   opacity: 0.65;
+}
+
+button.is-loading::before {
+  width: 14px;
+  height: 14px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 999px;
+  content: "";
+  animation: spin 700ms linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .app-shell {
@@ -107,7 +127,14 @@ button:disabled {
 
 .control-band {
   display: grid;
-  grid-template-columns: minmax(280px, 1fr) 96px 96px 124px auto;
+  grid-template-columns:
+    minmax(260px, 1.5fr)
+    86px
+    86px
+    116px
+    96px
+    minmax(170px, 0.85fr)
+    auto;
   gap: 12px;
   align-items: end;
   padding: 14px;
@@ -139,6 +166,10 @@ button:disabled {
 .field input:focus {
   outline: 2px solid rgba(37, 99, 235, 0.18);
   border-color: var(--blue);
+}
+
+.field-avoid input {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 
 .button-row {
@@ -203,6 +234,12 @@ button:disabled {
 .badge.uncertain {
   color: var(--amber);
   background: var(--amber-soft);
+}
+
+.badge.stale,
+.status-pill.busy {
+  color: var(--blue);
+  background: var(--blue-soft);
 }
 
 .badge.reject,
@@ -271,6 +308,7 @@ table {
   width: 100%;
   border-collapse: collapse;
   table-layout: fixed;
+  min-width: 820px;
 }
 
 th,
@@ -294,7 +332,7 @@ th {
 
 td:first-child,
 th:first-child {
-  width: 44%;
+  width: 35%;
 }
 
 .smiles-cell {
@@ -309,6 +347,37 @@ tr.candidate-row {
 tr.candidate-row:hover,
 tr.candidate-row.selected {
   background: var(--blue-soft);
+}
+
+.review-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.review-actions button[data-review-status="approved"] {
+  border-color: rgba(18, 128, 92, 0.35);
+  color: var(--green);
+}
+
+.review-actions button[data-review-status="rejected"] {
+  border-color: rgba(180, 35, 24, 0.35);
+  color: var(--red);
+}
+
+.badge.approved {
+  color: var(--green);
+  background: var(--teal-soft);
+}
+
+.badge.rejected {
+  color: var(--red);
+  background: var(--red-soft);
+}
+
+.badge.needs_review {
+  color: var(--amber);
+  background: var(--amber-soft);
 }
 
 .detail-empty,

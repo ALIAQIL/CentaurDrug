@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+import logging
 import os
+import time
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict, List, Literal
 
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
 
@@ -16,6 +19,13 @@ from src.tools.evaluator import ADMETPanelEvaluator, evaluate_rules
 
 DEFAULT_MODEL_ROOT = "models/admet_xgboost"
 STATIC_DIR = Path(__file__).resolve().parents[1] / "ui" / "static"
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+LOGGER = logging.getLogger(__name__)
+REQUEST_METRICS = {
+    "requests_total": 0,
+    "errors_total": 0,
+    "latency_seconds_total": 0.0,
+}
 
 app = FastAPI(
     title="CentaurDrug API",
@@ -23,15 +33,44 @@ app = FastAPI(
     version="0.2.0",
 )
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        origin.strip()
+        for origin in os.getenv(
+            "CENTAURDRUG_CORS_ORIGINS",
+            "http://localhost:8000,http://127.0.0.1:8000,"
+            "http://localhost:8501,http://127.0.0.1:8501",
+        ).split(",")
+        if origin.strip()
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 
 class MoleculeRequest(BaseModel):
-    smiles: str = Field(..., min_length=1, examples=["CCO"])
+    smiles: str = Field(..., min_length=1, max_length=1000, examples=["CCO"])
 
 
 class EvaluateRequest(MoleculeRequest):
-    model_root: str = DEFAULT_MODEL_ROOT
+    model_root: str = Field(default=DEFAULT_MODEL_ROOT, max_length=240)
+
+
+class OptimizationConstraints(BaseModel):
+    avoid_substructures: List[str] = Field(default_factory=list, max_length=12)
+    max_mw: float | None = Field(default=None, gt=0, le=2000)
+    max_logp: float | None = Field(default=None, ge=-10, le=15)
+    max_tpsa: float | None = Field(default=None, ge=0, le=400)
+    min_scaffold_preservation: float | None = Field(default=None, ge=0, le=1)
+
+    @field_validator("avoid_substructures")
+    @classmethod
+    def normalize_avoid_substructures(cls, values: List[str]) -> List[str]:
+        return [value.strip() for value in values if value.strip()]
 
 
 class OptimizeRequest(EvaluateRequest):
@@ -39,6 +78,9 @@ class OptimizeRequest(EvaluateRequest):
     beam_width: int = Field(default=3, ge=1, le=20)
     max_candidates_per_node: int = Field(default=10, ge=1, le=100)
     include_full_tree: bool = False
+    constraints: OptimizationConstraints = Field(
+        default_factory=OptimizationConstraints
+    )
 
 
 class ChatMessage(BaseModel):
@@ -80,7 +122,65 @@ def get_chat_llm():
         model="gemini-2.5-flash",
         temperature=0.2,
         google_api_key=api_key,
+        request_timeout=float(os.getenv("GEMINI_REQUEST_TIMEOUT", "12")),
+        retries=1,
     )
+
+
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    start = time.perf_counter()
+
+    try:
+        response = await call_next(request)
+    except Exception:
+        REQUEST_METRICS["errors_total"] += 1
+        LOGGER.exception("Unhandled request error: %s %s", request.method, request.url.path)
+        raise
+
+    duration = time.perf_counter() - start
+    REQUEST_METRICS["requests_total"] += 1
+    REQUEST_METRICS["latency_seconds_total"] += duration
+
+    if response.status_code >= 500:
+        REQUEST_METRICS["errors_total"] += 1
+
+    response.headers["X-Process-Time"] = f"{duration:.4f}"
+    LOGGER.info(
+        "%s %s -> %s in %.3fs",
+        request.method,
+        request.url.path,
+        response.status_code,
+        duration,
+    )
+    return response
+
+
+def allowed_model_roots() -> tuple[Path, ...]:
+    roots = [PROJECT_ROOT / DEFAULT_MODEL_ROOT]
+    extra_roots = os.getenv("CENTAURDRUG_ALLOWED_MODEL_ROOTS", "")
+
+    for value in extra_roots.split(","):
+        value = value.strip()
+        if not value:
+            continue
+
+        path = Path(value)
+        roots.append(path if path.is_absolute() else PROJECT_ROOT / path)
+
+    return tuple(path.resolve() for path in roots)
+
+
+def resolve_model_root(model_root: str) -> str:
+    requested = Path(model_root)
+    resolved = (
+        requested if requested.is_absolute() else PROJECT_ROOT / requested
+    ).resolve()
+
+    if resolved not in allowed_model_roots():
+        raise ValueError("model_root is not allowed for this API.")
+
+    return str(resolved)
 
 
 @app.get("/", include_in_schema=False)
@@ -97,6 +197,34 @@ def health() -> Dict[str, Any]:
     }
 
 
+@app.get("/version")
+def version() -> Dict[str, Any]:
+    return {
+        "service": "centaurdrug-api",
+        "api_version": app.version,
+        "default_model_root": DEFAULT_MODEL_ROOT,
+    }
+
+
+@app.get("/metrics", response_class=PlainTextResponse)
+def metrics() -> str:
+    return "\n".join(
+        [
+            "# HELP centaurdrug_requests_total Total HTTP requests.",
+            "# TYPE centaurdrug_requests_total counter",
+            f"centaurdrug_requests_total {REQUEST_METRICS['requests_total']}",
+            "# HELP centaurdrug_errors_total Total server-side HTTP errors.",
+            "# TYPE centaurdrug_errors_total counter",
+            f"centaurdrug_errors_total {REQUEST_METRICS['errors_total']}",
+            "# HELP centaurdrug_latency_seconds_total Total HTTP request latency.",
+            "# TYPE centaurdrug_latency_seconds_total counter",
+            "centaurdrug_latency_seconds_total "
+            f"{REQUEST_METRICS['latency_seconds_total']:.6f}",
+            "",
+        ]
+    )
+
+
 @app.post("/rules")
 def rules(request: MoleculeRequest) -> Dict[str, Any]:
     return evaluate_rules(request.smiles)
@@ -105,30 +233,39 @@ def rules(request: MoleculeRequest) -> Dict[str, Any]:
 @app.post("/evaluate")
 def evaluate(request: EvaluateRequest) -> Dict[str, Any]:
     try:
-        evaluator = get_evaluator(request.model_root)
+        model_root = resolve_model_root(request.model_root)
+        evaluator = get_evaluator(model_root)
         return evaluator.evaluate_molecule(request.smiles)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
+        LOGGER.exception("Evaluation failed for submitted molecule.")
         raise HTTPException(
             status_code=500,
-            detail=f"Evaluation failed: {exc}",
+            detail="Evaluation failed. Check the molecule and model artifacts, then try again.",
         ) from exc
 
 
 @app.post("/optimize")
 def optimize(request: OptimizeRequest) -> Dict[str, Any]:
     try:
+        model_root = resolve_model_root(request.model_root)
         return run_graph(
             smiles=request.smiles,
-            model_root=request.model_root,
+            model_root=model_root,
             max_depth=request.max_depth,
             beam_width=request.beam_width,
             max_candidates_per_node=request.max_candidates_per_node,
             include_full_tree=request.include_full_tree,
+            constraints=request.constraints.model_dump(exclude_none=True),
         )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
+        LOGGER.exception("Optimization failed for submitted molecule.")
         raise HTTPException(
             status_code=500,
-            detail=f"Optimization failed: {exc}",
+            detail="Optimization failed. Check the molecule and optimization settings, then try again.",
         ) from exc
 
 
@@ -154,6 +291,7 @@ def chat(request: ChatRequest) -> Dict[str, Any]:
             "suggested_prompts": build_suggested_prompts(request.context),
         }
     except Exception:
+        LOGGER.exception("Gemini chat call failed; using deterministic fallback.")
         return {
             "status": "ok",
             "mode": "fallback",

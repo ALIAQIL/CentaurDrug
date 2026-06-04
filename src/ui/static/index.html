@@ -24,6 +24,7 @@
               id="smilesInput"
               type="text"
               spellcheck="false"
+              maxlength="1000"
               value="CC(=O)Oc1ccccc1C(=O)O"
             />
           </label>
@@ -41,6 +42,16 @@
           <label class="field">
             <span>Candidates</span>
             <input id="candidateInput" type="number" min="1" max="100" value="8" />
+          </label>
+
+          <label class="field">
+            <span>Max MW</span>
+            <input id="maxMwInput" type="number" min="1" max="2000" placeholder="none" />
+          </label>
+
+          <label class="field field-avoid">
+            <span>Avoid SMARTS</span>
+            <input id="avoidInput" type="text" spellcheck="false" placeholder="[N+](=O)[O-]" />
           </label>
 
           <div class="button-row">
@@ -73,6 +84,7 @@
                     <th>Score</th>
                     <th>Delta</th>
                     <th>Decision</th>
+                    <th>Review</th>
                   </tr>
                 </thead>
                 <tbody id="candidateTable"></tbody>

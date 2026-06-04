@@ -1,5 +1,7 @@
+from functools import lru_cache
+
 from rdkit import Chem
-from rdkit.Chem import Descriptors, QED
+from rdkit.Chem import Descriptors, Lipinski, QED, rdMolDescriptors
 from rdkit.Chem.FilterCatalog import FilterCatalog, FilterCatalogParams
 
 
@@ -52,20 +54,52 @@ def qed_score(smiles: str) -> float | None:
     return float(QED.qed(mol))
 
 
-def pains_filter(smiles: str) -> dict:
+@lru_cache(maxsize=None)
+def _filter_catalog(name: str) -> FilterCatalog:
+    params = FilterCatalogParams()
+    catalog = getattr(FilterCatalogParams.FilterCatalogs, name)
+    params.AddCatalog(catalog)
+    return FilterCatalog(params)
+
+
+def _catalog_filter(smiles: str, catalog_name: str, result_key: str) -> dict:
     mol = smiles_to_mol(smiles)
     if mol is None:
         return {"valid": False}
 
-    params = FilterCatalogParams()
-    params.AddCatalog(FilterCatalogParams.FilterCatalogs.PAINS)
-    catalog = FilterCatalog(params)
-
-    entry = catalog.GetFirstMatch(mol)
+    entry = _filter_catalog(catalog_name).GetFirstMatch(mol)
 
     return {
         "valid": True,
-        "pains": entry is not None,
-        "pains_description": entry.GetDescription() if entry else None,
+        result_key: entry is not None,
+        f"{result_key}_description": entry.GetDescription() if entry else None,
         "passed": entry is None,
+    }
+
+
+def pains_filter(smiles: str) -> dict:
+    return _catalog_filter(smiles, "PAINS", "pains")
+
+
+def brenk_filter(smiles: str) -> dict:
+    return _catalog_filter(smiles, "BRENK", "brenk")
+
+
+def veber_filter(smiles: str) -> dict:
+    mol = smiles_to_mol(smiles)
+    if mol is None:
+        return {"valid": False}
+
+    rotatable_bonds = Lipinski.NumRotatableBonds(mol)
+    tpsa = rdMolDescriptors.CalcTPSA(mol)
+    violations = 0
+    violations += rotatable_bonds > 10
+    violations += tpsa > 140
+
+    return {
+        "valid": True,
+        "rotatable_bonds": int(rotatable_bonds),
+        "tpsa": float(tpsa),
+        "violations": int(violations),
+        "passed": violations == 0,
     }

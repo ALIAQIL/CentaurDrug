@@ -4,6 +4,7 @@ from src.agent.scoring import (
     build_score_vector,
     compute_scaffold_preservation,
     compute_synthetic_accessibility_proxy,
+    select_diverse_items,
 )
 
 
@@ -22,7 +23,9 @@ def _evaluation(
         "rules": {
             "qed": qed,
             "lipinski": {"passed": True},
+            "veber": {"passed": True},
             "pains": {"passed": True},
+            "brenk": {"passed": True},
         },
         "admet_predictions": {
             "solubility": {
@@ -68,10 +71,11 @@ def test_rejected_evaluation_scores_as_zero():
 
 def test_optimizer_score_uses_shared_score_vector():
     evaluation = _evaluation()
+    score_vector = build_score_vector(evaluation)
 
-    assert extract_candidate_score(evaluation) == build_score_vector(evaluation)[
-        "scalar_score"
-    ]
+    assert extract_candidate_score(evaluation) == score_vector["scalar_score"]
+    assert 0.0 <= score_vector["scalar_score"] <= 1.0
+    assert score_vector["score_metadata"]["scale"] == "0_to_1"
 
 
 def test_summarize_improvement_keeps_legacy_and_vector_keys():
@@ -130,3 +134,22 @@ def test_candidate_explanation_reports_improvements_and_tradeoffs():
         "outside the applicability domain" in item
         for item in explanation["tradeoffs"]
     )
+
+
+def test_select_diverse_items_prefers_nonredundant_candidates():
+    items = [
+        {"smiles": "CCO", "score": 0.9},
+        {"smiles": "CCCO", "score": 0.8},
+        {"smiles": "c1ccccc1", "score": 0.7},
+    ]
+
+    selected = select_diverse_items(
+        items,
+        top_k=2,
+        smiles_getter=lambda item: item["smiles"],
+        score_getter=lambda item: item["score"],
+        similarity_threshold=0.2,
+    )
+
+    assert selected[0]["smiles"] == "CCO"
+    assert selected[1]["smiles"] == "c1ccccc1"
