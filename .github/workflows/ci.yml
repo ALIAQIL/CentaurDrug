@@ -143,6 +143,7 @@ jobs:
           subject-name: ${{ env.REGISTRY }}/${{ github.repository }}-${{ matrix.service }}
           subject-digest: ${{ steps.build.outputs.digest }}
           push-to-registry: true
+          create-storage-record: false
 
   deploy:
     name: Deploy to Kubernetes
