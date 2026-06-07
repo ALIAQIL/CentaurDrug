@@ -24,10 +24,18 @@ dependencies = [
     "pyyaml>=6.0.3",
     "rdkit>=2026.3.2",
     "scikit-learn>=1.8.0",
+    "streamlit>=1.51.0",
     "tdc>=0.1",
     "uvicorn>=0.42.0",
     "xgboost>=3.2.0",
 ]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=9.0.0",
+    "ruff>=0.14.0",
+]
+
 [tool.pytest.ini_options]
 pythonpath = ["."]
 testpaths = ["tests"]

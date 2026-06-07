@@ -1,30 +1,199 @@
-name: CI
+name: CI/CD
 
 on:
   push:
+    branches:
+      - "**"
+    tags:
+      - "v*.*.*"
   pull_request:
+  workflow_dispatch:
+    inputs:
+      deploy:
+        description: "Deploy to Kubernetes after publishing images"
+        required: false
+        default: false
+        type: boolean
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  REGISTRY: ghcr.io
 
 jobs:
-  test:
+  checks:
+    name: Python checks
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout source
+        # Why: the runner starts empty, so this makes the repository files available.
+        uses: actions/checkout@v6
 
-      - name: Install uv
-        uses: astral-sh/setup-uv@v4
+      - name: Install uv with cache
+        # Why: uv installs Python dependencies quickly, and caching reduces repeat CI time.
+        uses: astral-sh/setup-uv@v8
+        with:
+          enable-cache: true
+
+      - name: Install project Python
+        # Why: this respects .python-version, so CI uses the same Python major/minor as the project.
+        run: uv python install
 
       - name: Install dependencies
-        run: uv sync
+        # Why: syncing the project plus dev extras gives CI both runtime packages and test/lint tools.
+        run: uv sync --extra dev
 
       - name: Lint
+        # Why: ruff catches syntax, import, and style issues before slower tests or deploy steps run.
         run: uv run ruff check src tests
 
       - name: Tests
+        # Why: pytest verifies the API, model helpers, agent logic, and validation code still behave.
         run: uv run pytest
 
       - name: API smoke test
+        # Why: unit tests can pass while the app startup is broken, so this boots FastAPI and hits /health.
         run: |
-          uv run uvicorn src.api.main:app --host 0.0.0.0 --port 8000 &
-          sleep 5
-          curl http://localhost:8000/health
+          set -euo pipefail
+          uv run uvicorn src.api.main:app --host 127.0.0.1 --port 8000 &
+          server_pid=$!
+          trap 'kill "$server_pid"' EXIT
+
+          for attempt in {1..20}; do
+            if curl --fail --silent http://127.0.0.1:8000/health; then
+              exit 0
+            fi
+            sleep 1
+          done
+
+          echo "API did not become healthy after ${attempt} attempts."
+          exit 1
+
+  containers:
+    name: Container image (${{ matrix.service }})
+    needs: checks
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      attestations: write
+      id-token: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - service: api
+            dockerfile: Dockerfile.api
+          - service: ui
+            dockerfile: Dockerfile.ui
+
+    steps:
+      - name: Checkout source
+        # Why: Docker needs the project files as build context.
+        uses: actions/checkout@v6
+
+      - name: Set up Docker Buildx
+        # Why: Buildx enables cache-backed, repeatable image builds on GitHub runners.
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GHCR
+        # Why: pushes to ghcr.io need authentication; PRs only build, so they skip login.
+        if: ${{ github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v') }}
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Prepare image tags
+        id: meta
+        # Why: metadata-action creates consistent tags such as sha-..., main, latest, and release tags.
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ env.REGISTRY }}/${{ github.repository }}-${{ matrix.service }}
+          tags: |
+            type=raw,value=sha-${{ github.sha }}
+            type=ref,event=branch
+            type=ref,event=tag
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build image
+        id: build
+        # Why: PRs validate that Docker builds; main/tags/manual runs also publish the image.
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ./${{ matrix.dockerfile }}
+          push: ${{ github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v') }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=${{ matrix.service }}
+          cache-to: type=gha,scope=${{ matrix.service }},mode=max
+
+      - name: Attest image provenance
+        # Why: attestations let consumers verify where the pushed image came from.
+        if: ${{ github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v') }}
+        uses: actions/attest@v4
+        with:
+          subject-name: ${{ env.REGISTRY }}/${{ github.repository }}-${{ matrix.service }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
+
+  deploy:
+    name: Deploy to Kubernetes
+    needs: containers
+    runs-on: ubuntu-latest
+    if: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && inputs.deploy) }}
+    environment: production
+    permissions:
+      contents: read
+    env:
+      API_IMAGE: ghcr.io/${{ github.repository }}-api:sha-${{ github.sha }}
+      UI_IMAGE: ghcr.io/${{ github.repository }}-ui:sha-${{ github.sha }}
+      KUBE_CONFIG: ${{ secrets.KUBE_CONFIG }}
+
+    steps:
+      - name: Checkout source
+        # Why: deployment uses the Kubernetes manifests stored in this repository.
+        uses: actions/checkout@v6
+
+      - name: Skip deploy when kubeconfig is missing
+        # Why: image publishing should still succeed even before a cluster secret is configured.
+        if: ${{ env.KUBE_CONFIG == '' }}
+        run: echo "KUBE_CONFIG is not configured; images were published, but Kubernetes deployment was skipped."
+
+      - name: Install kubectl
+        # Why: kubectl is the CLI that applies manifests and waits for Kubernetes rollouts.
+        if: ${{ env.KUBE_CONFIG != '' }}
+        uses: azure/setup-kubectl@v4
+        with:
+          version: latest
+
+      - name: Configure kubeconfig
+        # Why: this authenticates the workflow to your cluster using the production secret.
+        if: ${{ env.KUBE_CONFIG != '' }}
+        run: |
+          mkdir -p "$HOME/.kube"
+          printf '%s' "$KUBE_CONFIG" > "$HOME/.kube/config"
+          chmod 600 "$HOME/.kube/config"
+
+      - name: Apply manifests and deploy images
+        # Why: apply creates/updates the services, then set image rolls out the exact commit that passed CI.
+        if: ${{ env.KUBE_CONFIG != '' }}
+        run: |
+          set -euo pipefail
+          kubectl apply -f k8s/api-deployment.yaml -f k8s/ui-deployment.yaml
+          kubectl set image deployment/centaurdrug-api api="$API_IMAGE"
+          kubectl set image deployment/centaurdrug-ui ui="$UI_IMAGE"
+
+      - name: Wait for rollout
+        # Why: the workflow should fail if Kubernetes cannot start the new pods successfully.
+        if: ${{ env.KUBE_CONFIG != '' }}
+        run: |
+          kubectl rollout status deployment/centaurdrug-api --timeout=180s
+          kubectl rollout status deployment/centaurdrug-ui --timeout=180s

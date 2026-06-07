@@ -43,6 +43,32 @@ Main endpoints:
 - `POST /optimize`: LangGraph agent optimization with candidate explanations.
 - `POST /chat`: context-aware copilot chat for the current molecule/candidate.
 
+## CI/CD
+
+The GitHub Actions pipeline lives in `.github/workflows/ci.yml`.
+
+What it does and why:
+
+- `Python checks`: runs on every push, pull request, and manual workflow run.
+  It checks out the repo, installs `uv`, syncs runtime plus dev dependencies,
+  runs `ruff`, runs `pytest`, then starts FastAPI and calls `/health`. This
+  catches code quality, test, and application startup problems before images
+  are published.
+- `Container image`: builds both `Dockerfile.api` and `Dockerfile.ui`. Pull
+  requests build images without publishing, while pushes to `main`, version
+  tags like `v1.0.0`, and manual runs publish images to GitHub Container
+  Registry:
+  `ghcr.io/<owner>/<repo>-api` and `ghcr.io/<owner>/<repo>-ui`.
+- `Deploy to Kubernetes`: runs after image publishing on `main`, or manually
+  when the workflow input `deploy` is enabled. It applies the Kubernetes
+  manifests, updates the API and UI deployments to the exact `sha-<commit>`
+  image tag that passed CI, then waits for both rollouts.
+
+To enable Kubernetes deployment, add a repository or environment secret named
+`KUBE_CONFIG` containing the kubeconfig for the target cluster. If that secret
+is not configured, the workflow still publishes images and clearly skips the
+cluster deployment step.
+
 ## Training Artifacts
 
 Each training run writes artifacts under `models/admet_xgboost/<dataset>/`.
