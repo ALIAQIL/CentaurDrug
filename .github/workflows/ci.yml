@@ -81,8 +81,6 @@ jobs:
     permissions:
       contents: read
       packages: write
-      attestations: write
-      id-token: write
     strategy:
       fail-fast: false
       matrix:
@@ -135,16 +133,6 @@ jobs:
           cache-from: type=gha,scope=${{ matrix.service }}
           cache-to: type=gha,scope=${{ matrix.service }},mode=max
 
-      - name: Attest image provenance
-        # Why: attestations let consumers verify where the pushed image came from.
-        if: ${{ github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v') }}
-        uses: actions/attest@v4.1.0
-        with:
-          subject-name: ${{ env.REGISTRY }}/${{ github.repository }}-${{ matrix.service }}
-          subject-digest: ${{ steps.build.outputs.digest }}
-          push-to-registry: true
-          create-storage-record: false
-
   deploy:
     name: Deploy to Kubernetes
     needs: containers
@@ -153,39 +141,46 @@ jobs:
     environment: production
     permissions:
       contents: read
-    env:
-      API_IMAGE: ghcr.io/${{ github.repository }}-api:sha-${{ github.sha }}
-      UI_IMAGE: ghcr.io/${{ github.repository }}-ui:sha-${{ github.sha }}
-      KUBE_CONFIG: ${{ secrets.KUBE_CONFIG }}
 
     steps:
       - name: Checkout source
         # Why: deployment uses the Kubernetes manifests stored in this repository.
         uses: actions/checkout@v6.0.3
 
+      - name: Prepare deployment config
+        id: deploy_config
+        # Why: GHCR image names must be lowercase, and the kubeconfig secret may not exist yet.
+        env:
+          KUBE_CONFIG: ${{ secrets.KUBE_CONFIG }}
+        run: |
+          image_repo="${GITHUB_REPOSITORY,,}"
+          echo "API_IMAGE=ghcr.io/${image_repo}-api:sha-${GITHUB_SHA}" >> "$GITHUB_ENV"
+          echo "UI_IMAGE=ghcr.io/${image_repo}-ui:sha-${GITHUB_SHA}" >> "$GITHUB_ENV"
+
+          if [ -n "$KUBE_CONFIG" ]; then
+            echo "has_kube_config=true" >> "$GITHUB_OUTPUT"
+            mkdir -p "$HOME/.kube"
+            printf '%s' "$KUBE_CONFIG" > "$HOME/.kube/config"
+            chmod 600 "$HOME/.kube/config"
+          else
+            echo "has_kube_config=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Skip deploy when kubeconfig is missing
         # Why: image publishing should still succeed even before a cluster secret is configured.
-        if: ${{ env.KUBE_CONFIG == '' }}
+        if: ${{ steps.deploy_config.outputs.has_kube_config == 'false' }}
         run: echo "KUBE_CONFIG is not configured; images were published, but Kubernetes deployment was skipped."
 
       - name: Install kubectl
         # Why: kubectl is the CLI that applies manifests and waits for Kubernetes rollouts.
-        if: ${{ env.KUBE_CONFIG != '' }}
+        if: ${{ steps.deploy_config.outputs.has_kube_config == 'true' }}
         uses: azure/setup-kubectl@v5.1.0
         with:
           version: latest
 
-      - name: Configure kubeconfig
-        # Why: this authenticates the workflow to your cluster using the production secret.
-        if: ${{ env.KUBE_CONFIG != '' }}
-        run: |
-          mkdir -p "$HOME/.kube"
-          printf '%s' "$KUBE_CONFIG" > "$HOME/.kube/config"
-          chmod 600 "$HOME/.kube/config"
-
       - name: Apply manifests and deploy images
         # Why: apply creates/updates the services, then set image rolls out the exact commit that passed CI.
-        if: ${{ env.KUBE_CONFIG != '' }}
+        if: ${{ steps.deploy_config.outputs.has_kube_config == 'true' }}
         run: |
           set -euo pipefail
           kubectl apply -f k8s/api-deployment.yaml -f k8s/ui-deployment.yaml
@@ -194,7 +189,7 @@ jobs:
 
       - name: Wait for rollout
         # Why: the workflow should fail if Kubernetes cannot start the new pods successfully.
-        if: ${{ env.KUBE_CONFIG != '' }}
+        if: ${{ steps.deploy_config.outputs.has_kube_config == 'true' }}
         run: |
           kubectl rollout status deployment/centaurdrug-api --timeout=180s
           kubectl rollout status deployment/centaurdrug-ui --timeout=180s

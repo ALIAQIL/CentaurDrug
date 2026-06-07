@@ -33,7 +33,8 @@ make api
 Then visit `http://localhost:8000`.
 
 The plain browser frontend lives in `src/ui/static/` and is served by FastAPI.
-The older Streamlit prototype remains in `src/ui/app.py`.
+The older Streamlit prototype remains in `src/ui/app.py`; install the
+`prototype` extra only if you want to run that legacy prototype locally.
 
 Main endpoints:
 
