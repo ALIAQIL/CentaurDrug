@@ -3,20 +3,22 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.api
+    environment:
+      CENTAURDRUG_MODEL_ROOT: /app/models/admet_xgboost
+      CENTAURDRUG_ALLOWED_MODEL_ROOTS: /app/models/admet_xgboost
+      CENTAURDRUG_REQUIRE_MODELS_ON_STARTUP: "1"
+    volumes:
+      - ./models/admet_xgboost:/app/models/admet_xgboost:ro
     ports:
       - "8000:8000"
 
-  ui:
-    build:
-      context: .
-      dockerfile: Dockerfile.ui
-    ports:
-      - "8501:8501"
-    depends_on:
-      - api
-
   mlflow:
     image: ghcr.io/mlflow/mlflow
+    volumes:
+      - mlflow-data:/mlflow
     ports:
       - "5000:5000"
-    command: mlflow ui --host 0.0.0.0
+    command: mlflow ui --host 0.0.0.0 --backend-store-uri sqlite:////mlflow/mlflow.db
+
+volumes:
+  mlflow-data:

@@ -28,6 +28,52 @@ MODEL_PATHS = {
     "cyp3a4": "CYP3A4_Veith",
 }
 
+REQUIRED_ARTIFACT_FILES = (
+    "model.joblib",
+    "featurizer.joblib",
+    "metadata.json",
+)
+
+
+class ModelArtifactError(RuntimeError):
+    pass
+
+
+def validate_model_artifacts(model_root: str | Path = DEFAULT_MODEL_ROOT) -> Dict[str, Any]:
+    root = Path(model_root)
+    missing: Dict[str, list[str]] = {}
+
+    for short_name, dataset_dir in MODEL_PATHS.items():
+        artifact_dir = root / dataset_dir
+        missing_files = [
+            filename
+            for filename in REQUIRED_ARTIFACT_FILES
+            if not (artifact_dir / filename).exists()
+        ]
+
+        if missing_files:
+            missing[short_name] = [
+                str(artifact_dir / filename)
+                for filename in missing_files
+            ]
+
+    return {
+        "status": "ok" if not missing else "error",
+        "model_root": str(root),
+        "required_models": sorted(MODEL_PATHS.keys()),
+        "missing": missing,
+    }
+
+
+def assert_model_artifacts_ready(model_root: str | Path = DEFAULT_MODEL_ROOT) -> None:
+    result = validate_model_artifacts(model_root)
+
+    if result["status"] != "ok":
+        raise ModelArtifactError(
+            "ADMET model artifacts are missing or incomplete: "
+            f"{result['missing']}"
+        )
+
 
 def evaluate_rules(smiles: str) -> dict:
     if not is_valid_smiles(smiles):
@@ -64,15 +110,28 @@ def evaluate_rules(smiles: str) -> dict:
 
 
 class ADMETPanelEvaluator:
-    def __init__(self, model_root: str | Path = DEFAULT_MODEL_ROOT):
+    def __init__(
+        self,
+        model_root: str | Path = DEFAULT_MODEL_ROOT,
+        require_all_models: bool = True,
+    ):
         self.model_root = Path(model_root)
         self.predictors: Dict[str, ADMETPredictor] = {}
+
+        if require_all_models:
+            assert_model_artifacts_ready(self.model_root)
 
         for short_name, dataset_dir in MODEL_PATHS.items():
             artifact_dir = self.model_root / dataset_dir
 
             if artifact_dir.exists():
                 self.predictors[short_name] = ADMETPredictor(artifact_dir)
+
+        if require_all_models and set(self.predictors) != set(MODEL_PATHS):
+            missing = sorted(set(MODEL_PATHS).difference(self.predictors))
+            raise ModelArtifactError(
+                f"Could not load required ADMET predictors: {missing}"
+            )
 
     def predict_admet(self, smiles: str) -> Dict[str, Any]:
         predictions = {}

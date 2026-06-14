@@ -32,17 +32,95 @@ make api
 
 Then visit `http://localhost:8000`.
 
-The plain browser frontend lives in `src/ui/static/` and is served by FastAPI.
-The older Streamlit prototype remains in `src/ui/app.py`; install the
-`prototype` extra only if you want to run that legacy prototype locally.
+The browser frontend lives in `src/ui/static/` and is served directly by
+FastAPI. There is no Streamlit app and no separate UI container in the current
+architecture.
 
 Main endpoints:
 
 - `GET /health`: service status.
+- `GET /ready`: readiness check that verifies all five ADMET model artifact
+  folders are present and complete.
 - `POST /rules`: lightweight rule filters.
 - `POST /evaluate`: full ADMET panel evaluation.
 - `POST /optimize`: LangGraph agent optimization with candidate explanations.
 - `POST /chat`: context-aware copilot chat for the current molecule/candidate.
+
+## Model Artifacts And Containers
+
+Container images do not bake trained ADMET models into the image. The Docker
+and Kubernetes runtime contract is to mount model artifacts at:
+
+```bash
+/app/models/admet_xgboost
+```
+
+The API expects the five dataset folders under that root:
+
+- `Solubility_AqSolDB`
+- `Lipophilicity_AstraZeneca`
+- `AMES`
+- `hERG`
+- `CYP3A4_Veith`
+
+Each folder must contain at least `model.joblib`, `featurizer.joblib`, and
+`metadata.json`. When `CENTAURDRUG_REQUIRE_MODELS_ON_STARTUP=1`, startup fails
+if the mounted model panel is incomplete. `docker-compose.yml` mounts the local
+`./models/admet_xgboost` folder read-only into the container.
+
+## UI Architecture Decision Report
+
+### Decision
+
+CentaurDrug uses a single application service:
+
+```text
+FastAPI backend + static HTML/CSS/JavaScript frontend
+```
+
+The static frontend is served by the FastAPI application at `/`, with assets
+under `/static`. The frontend calls the same FastAPI service for `/rules`,
+`/evaluate`, `/optimize`, `/chat`, `/health`, `/ready`, and `/metrics`.
+
+### Why This Architecture
+
+This is the best fit for the current project because:
+
+- the real UI is already implemented in plain HTML, CSS, and JavaScript;
+- FastAPI already serves the static UI and backend endpoints in one process;
+- deployment is simpler: one API image, one Kubernetes deployment, one service;
+- CI/CD is easier to validate because one container contains the complete app;
+- there is no need to maintain a second Streamlit prototype path.
+
+### What Was Removed
+
+The old Streamlit prototype was removed from the active codebase. The project no
+longer has:
+
+- `src/ui/app.py`;
+- `Dockerfile.ui`;
+- `k8s/ui-deployment.yaml`;
+- Streamlit optional dependencies;
+- a separate `ui` service in `docker-compose.yml`;
+- a separate `centaurdrug-ui` image in CI/CD.
+
+### Current Runtime Shape
+
+```text
+User browser
+    -> FastAPI /
+        -> serves src/ui/static/index.html
+        -> serves src/ui/static/styles.css
+        -> serves src/ui/static/app.js
+        -> exposes API endpoints
+        -> loads mounted ADMET model artifacts
+```
+
+### Future Direction
+
+If the frontend becomes larger later, the next step should be a dedicated
+frontend build system such as Vite, not Streamlit. For now, the current
+HTML/CSS/JavaScript UI is simple, fast, and aligned with the PFA demo.
 
 ## CI/CD
 
@@ -55,15 +133,17 @@ What it does and why:
   runs `ruff`, runs `pytest`, then starts FastAPI and calls `/health`. This
   catches code quality, test, and application startup problems before images
   are published.
-- `Container image`: builds both `Dockerfile.api` and `Dockerfile.ui`. Pull
-  requests build images without publishing, while pushes to `main`, version
-  tags like `v1.0.0`, and manual runs publish images to GitHub Container
-  Registry:
-  `ghcr.io/<owner>/<repo>-api` and `ghcr.io/<owner>/<repo>-ui`.
+- `Container image`: builds `Dockerfile.api`. Pull requests build the image
+  without publishing, while pushes to `main`, version tags like `v1.0.0`, and
+  manual runs publish the API image to GitHub Container Registry:
+  `ghcr.io/<owner>/<repo>-api`.
+- `API container smoke test`: builds the API image locally, generates tiny
+  smoke model artifacts, mounts them into the container, then calls `/ready`,
+  `/health`, `/rules`, and `/evaluate`.
 - `Deploy to Kubernetes`: runs after image publishing on `main`, or manually
   when the workflow input `deploy` is enabled. It applies the Kubernetes
-  manifests, updates the API and UI deployments to the exact `sha-<commit>`
-  image tag that passed CI, then waits for both rollouts.
+  manifest, updates the API deployment to the exact `sha-<commit>` image tag
+  that passed CI, then waits for the rollout.
 
 To enable Kubernetes deployment, add a repository or environment secret named
 `KUBE_CONFIG` containing the kubeconfig for the target cluster. If that secret

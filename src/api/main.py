@@ -14,10 +14,19 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
 
 from src.agent.graph import run_graph
-from src.tools.evaluator import ADMETPanelEvaluator, evaluate_rules
+from src.tools.evaluator import (
+    ADMETPanelEvaluator,
+    ModelArtifactError,
+    assert_model_artifacts_ready,
+    evaluate_rules,
+    validate_model_artifacts,
+)
 
 
-DEFAULT_MODEL_ROOT = "models/admet_xgboost"
+DEFAULT_MODEL_ROOT = os.getenv(
+    "CENTAURDRUG_MODEL_ROOT",
+    "models/admet_xgboost",
+)
 STATIC_DIR = Path(__file__).resolve().parents[1] / "ui" / "static"
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 LOGGER = logging.getLogger(__name__)
@@ -39,8 +48,7 @@ app.add_middleware(
         origin.strip()
         for origin in os.getenv(
             "CENTAURDRUG_CORS_ORIGINS",
-            "http://localhost:8000,http://127.0.0.1:8000,"
-            "http://localhost:8501,http://127.0.0.1:8501",
+            "http://localhost:8000,http://127.0.0.1:8000",
         ).split(",")
         if origin.strip()
     ],
@@ -127,6 +135,23 @@ def get_chat_llm():
     )
 
 
+def require_models_on_startup() -> bool:
+    return os.getenv("CENTAURDRUG_REQUIRE_MODELS_ON_STARTUP", "0").lower() in {
+        "1",
+        "true",
+        "yes",
+    }
+
+
+@app.on_event("startup")
+def validate_startup_model_artifacts() -> None:
+    if not require_models_on_startup():
+        return
+
+    model_root = resolve_model_root(DEFAULT_MODEL_ROOT)
+    assert_model_artifacts_ready(model_root)
+
+
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
     start = time.perf_counter()
@@ -197,6 +222,25 @@ def health() -> Dict[str, Any]:
     }
 
 
+@app.get("/ready")
+def ready() -> Dict[str, Any]:
+    try:
+        model_root = resolve_model_root(DEFAULT_MODEL_ROOT)
+    except ValueError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    readiness = validate_model_artifacts(model_root)
+
+    if readiness["status"] != "ok":
+        raise HTTPException(status_code=503, detail=readiness)
+
+    return {
+        "status": "ok",
+        "service": "centaurdrug-api",
+        "models": readiness,
+    }
+
+
 @app.get("/version")
 def version() -> Dict[str, Any]:
     return {
@@ -238,6 +282,8 @@ def evaluate(request: EvaluateRequest) -> Dict[str, Any]:
         return evaluator.evaluate_molecule(request.smiles)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except ModelArtifactError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     except Exception as exc:
         LOGGER.exception("Evaluation failed for submitted molecule.")
         raise HTTPException(
@@ -261,6 +307,8 @@ def optimize(request: OptimizeRequest) -> Dict[str, Any]:
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except ModelArtifactError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     except Exception as exc:
         LOGGER.exception("Optimization failed for submitted molecule.")
         raise HTTPException(
