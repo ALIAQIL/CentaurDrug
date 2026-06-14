@@ -1,3 +1,6 @@
+import subprocess
+import sys
+
 import pytest
 
 from src.mlops.smoke_artifacts import create_smoke_model_artifacts
@@ -30,3 +33,24 @@ def test_smoke_artifacts_are_loadable(tmp_path):
     assert result["admet_predictions"]["ames"]["probability_positive"] == pytest.approx(
         0.1
     )
+
+
+def test_smoke_artifacts_created_by_module_command_are_loadable(tmp_path):
+    root = tmp_path / "models"
+
+    subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "src.mlops.smoke_artifacts",
+            "--output-dir",
+            str(root),
+        ],
+        check=True,
+    )
+
+    evaluator = ADMETPanelEvaluator(model_root=root)
+    result = evaluator.evaluate_molecule("CCO")
+
+    assert result["status"] == "ok"
+    assert result["admet_predictions"]["solubility"]["prediction"] == -2.0

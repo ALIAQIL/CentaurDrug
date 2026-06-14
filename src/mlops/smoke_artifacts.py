@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
 from typing import Iterable
 
@@ -36,6 +37,15 @@ class ConstantClassifier:
             dtype=np.float32,
         )
         return np.column_stack([1.0 - probabilities, probabilities])
+
+
+CANONICAL_MODULE = "src.mlops.smoke_artifacts"
+
+if __name__ == "__main__":
+    sys.modules[CANONICAL_MODULE] = sys.modules[__name__]
+
+for smoke_class in (SmokeFeaturizer, ConstantRegressor, ConstantClassifier):
+    smoke_class.__module__ = CANONICAL_MODULE
 
 
 SMOKE_MODEL_CONFIG = {
