@@ -8,7 +8,7 @@ services:
       CENTAURDRUG_ALLOWED_MODEL_ROOTS: /app/models/admet_xgboost
       CENTAURDRUG_REQUIRE_MODELS_ON_STARTUP: "1"
     volumes:
-      - ./models/admet_xgboost:/app/models/admet_xgboost:ro
+      - ${CENTAURDRUG_HOST_MODEL_ROOT:-./models/admet_xgboost}:/app/models/admet_xgboost:ro
     ports:
       - "8000:8000"
 

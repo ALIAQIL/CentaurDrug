@@ -59,7 +59,7 @@ context-aware chat assistant.
 | Frontend UI | Implemented | Static HTML/CSS/JavaScript served directly by FastAPI. |
 | MLOps/DevOps | Implemented prototype | DVC training stages, MLflow verification, Docker, Compose, GitHub Actions, GHCR, Kubernetes API manifest. |
 | Scientific reliability | Limited | Predictions need more validation, more datasets, uncertainty, and expert review. |
-| Production readiness | Not yet | Needs model registry/promotion, monitoring, security hardening, resource limits, and dependency locking. |
+| Production readiness | Not yet | Needs model registry/promotion, monitoring, security hardening, resource limits, and model governance. |
 
 ## Features
 
@@ -479,15 +479,103 @@ Important environment variables:
 | `CENTAURDRUG_ALLOWED_MODEL_ROOTS` | Allowed roots for model loading. Prevents arbitrary path access. |
 | `CENTAURDRUG_REQUIRE_MODELS_ON_STARTUP` | Enables startup failure when artifacts are incomplete. |
 | `CENTAURDRUG_CORS_ORIGINS` | Allowed browser origins. |
+| `CENTAURDRUG_HOST_MODEL_ROOT` | Host folder mounted into Compose as `/app/models/admet_xgboost`. |
 | `GEMINI_API_KEY` | Optional key for Gemini chat and strategy guidance. |
 | `GEMINI_REQUEST_TIMEOUT` | Optional Gemini request timeout. |
+
+## Model Delivery
+
+CentaurDrug now supports three model-delivery paths:
+
+1. DVC remote storage for trained model artifacts.
+2. MLflow Model Registry entries for versioned bundle handoff.
+3. Versioned mounted artifact bundles for Docker, Compose, and Kubernetes.
+
+The local default DVC remote is:
+
+```text
+../centaurdrug-dvc-remote
+```
+
+From the repository root, this is a sibling folder next to `centaurdrug`.
+DVC stores it as `../../centaurdrug-dvc-remote` in `.dvc/config` because DVC
+remote paths are written relative to `.dvc/config`.
+
+Create or refresh it, then push DVC-tracked model outputs:
+
+```bash
+make dvc-remote
+make dvc-push
+```
+
+For cloud storage, replace `DVC_REMOTE_URL` with an S3, GCS, Azure, SSH, or
+other DVC-supported remote:
+
+```bash
+make dvc-remote DVC_REMOTE_NAME=s3-model-store DVC_REMOTE_URL=s3://my-bucket/centaurdrug
+```
+
+Create a versioned mounted bundle from the current ADMET panel:
+
+```bash
+make bundle-models
+```
+
+This writes:
+
+```text
+model_bundles/centaurdrug-admet-panel/<version>/
+    manifest.json
+    admet_xgboost/
+        _bundle_manifest.json
+        Solubility_AqSolDB/
+        Lipophilicity_AstraZeneca/
+        AMES/
+        hERG/
+        CYP3A4_Veith/
+```
+
+The manifest contains bundle version, Git metadata, model metadata, metrics,
+file sizes, and SHA-256 checksums. `/ready` reports the bundle metadata when
+`_bundle_manifest.json` is present in the mounted model root.
+
+Verify a bundle:
+
+```bash
+make verify-model-bundle MODEL_BUNDLE_DIR=model_bundles/centaurdrug-admet-panel/<version>
+```
+
+Run Compose with a versioned bundle:
+
+```bash
+CENTAURDRUG_HOST_MODEL_ROOT=./model_bundles/centaurdrug-admet-panel/<version>/admet_xgboost \
+docker compose up --build
+```
+
+Register a verified bundle in MLflow:
+
+```bash
+export MLFLOW_TRACKING_URI=sqlite:///mlflow.db
+make register-model-bundle \
+  MODEL_BUNDLE_DIR=model_bundles/centaurdrug-admet-panel/<version> \
+  MLFLOW_MODEL_ALIAS=staging
+```
+
+The registry entry points to the logged bundle artifact. This is a registry
+handoff for the full ADMET panel, not a single MLflow pyfunc model.
 
 ## Local Development
 
 Install dependencies:
 
 ```bash
-uv sync --extra dev
+uv sync --locked --group dev --group training
+```
+
+Install every optional workflow group:
+
+```bash
+uv sync --locked --all-groups
 ```
 
 Run tests:
@@ -560,7 +648,7 @@ Compose starts:
 The API service mounts:
 
 ```text
-./models/admet_xgboost:/app/models/admet_xgboost:ro
+${CENTAURDRUG_HOST_MODEL_ROOT:-./models/admet_xgboost}:/app/models/admet_xgboost:ro
 ```
 
 This mirrors the production idea: the image contains code and dependencies, and
@@ -575,12 +663,17 @@ the model panel is provided by an external volume.
 - training command;
 - source dependencies;
 - configuration dependency;
+- dependency lockfile;
 - model artifacts;
 - reports;
 - plots;
 - metrics.
 
 This makes model training reproducible and traceable.
+
+The tracked default remote is `local-model-store`, pointing to
+`../centaurdrug-dvc-remote`. Keep credentials and cloud-specific overrides out
+of Git with DVC local config when moving beyond the local file remote.
 
 ### MLflow
 
@@ -593,6 +686,9 @@ MLflow is used for experiment tracking. The helper
 - log a text artifact;
 - log a plot artifact;
 - read the run back.
+
+`src/mlops/model_delivery.py` can also log a verified model bundle and create a
+Model Registry version for `centaurdrug-admet-panel`.
 
 ### Smoke Model Artifacts
 
@@ -626,7 +722,7 @@ Pipeline jobs:
    - checkout;
    - install uv;
    - install project Python;
-   - `uv sync --extra dev`;
+   - `uv sync --locked --group dev --group training`;
    - `ruff check src tests`;
    - `pytest`;
    - start FastAPI and call `/health`.
@@ -732,7 +828,6 @@ Still needed:
 - run the Docker image as a non-root user;
 - add Kubernetes CPU and memory requests/limits;
 - use Kubernetes Secrets for `GEMINI_API_KEY`;
-- add dependency locking with `uv.lock`;
 - add vulnerability scanning;
 - add structured logging;
 - add Prometheus/Grafana monitoring;
@@ -757,26 +852,18 @@ CentaurDrug is a prototype. Important limitations:
 
 Recommended next steps:
 
-1. Add `uv.lock` and make Docker/CI install from the lock file.
-2. Split dependencies into runtime, training, notebook, and dev groups so the
-   API Docker image becomes smaller and faster to build.
-3. Choose the final model delivery strategy:
-   - mounted model volume,
-   - DVC pull at startup,
-   - or MLflow model registry.
-4. Add model version metadata to `/ready` and `/version`.
-5. Add model promotion rules: experimental, staging, production.
-6. Add Kubernetes resource requests and limits.
-7. Add Kubernetes Secrets for Gemini and other credentials.
-8. Add Ingress and TLS for a real deployment URL.
-9. Deploy MLflow properly in Kubernetes.
-10. Replace the prototype Airflow DAG with a real five-model training
+1. Add stricter model promotion rules: experimental, staging, production.
+2. Add Kubernetes resource requests and limits.
+3. Add Kubernetes Secrets for Gemini and other credentials.
+4. Add Ingress and TLS for a real deployment URL.
+5. Deploy MLflow properly in Kubernetes.
+6. Replace the prototype Airflow DAG with a real five-model training
     orchestration.
-11. Add Prometheus/Grafana dashboards.
-12. Add uncertainty estimation and more ADMET datasets such as CYP2D6, CYP2C9,
+7. Add Prometheus/Grafana dashboards.
+8. Add uncertainty estimation and more ADMET datasets such as CYP2D6, CYP2C9,
     LD50, and DILI.
-13. Add stronger synthetic feasibility checks.
-14. Add optional docking or target-specific scoring after the ADMET and API
+9. Add stronger synthetic feasibility checks.
+10. Add optional docking or target-specific scoring after the ADMET and API
     layers are stable.
 
 ## Defense Summary
@@ -799,5 +886,5 @@ tree, making the result easier to inspect and defend.
 
 The honest conclusion is that CentaurDrug is demo-ready and architecturally
 strong for a prototype, but it still needs more model validation, monitoring,
-security hardening, dependency locking, and model governance before it can be
+security hardening, deployment monitoring, and model governance before it can be
 called production-ready.

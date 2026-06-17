@@ -1,0 +1,4 @@
+[core]
+    remote = local-model-store
+['remote "local-model-store"']
+    url = ../../centaurdrug-dvc-remote

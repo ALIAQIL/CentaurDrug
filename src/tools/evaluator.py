@@ -33,10 +33,45 @@ REQUIRED_ARTIFACT_FILES = (
     "featurizer.joblib",
     "metadata.json",
 )
+RUNTIME_BUNDLE_MANIFEST = "_bundle_manifest.json"
 
 
 class ModelArtifactError(RuntimeError):
     pass
+
+
+def load_model_bundle_manifest(
+    model_root: str | Path = DEFAULT_MODEL_ROOT,
+) -> Dict[str, Any] | None:
+    root = Path(model_root)
+    candidates = [
+        root / RUNTIME_BUNDLE_MANIFEST,
+        root.parent / "manifest.json",
+    ]
+
+    for path in candidates:
+        if not path.exists():
+            continue
+
+        try:
+            manifest = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            return {
+                "status": "error",
+                "manifest_path": str(path),
+                "reason": "invalid_bundle_manifest",
+            }
+
+        return {
+            "status": "ok",
+            "manifest_path": str(path),
+            "bundle_name": manifest.get("bundle_name"),
+            "bundle_version": manifest.get("bundle_version"),
+            "created_at_utc": manifest.get("created_at_utc"),
+            "git": manifest.get("git"),
+        }
+
+    return None
 
 
 def validate_model_artifacts(model_root: str | Path = DEFAULT_MODEL_ROOT) -> Dict[str, Any]:
@@ -62,6 +97,7 @@ def validate_model_artifacts(model_root: str | Path = DEFAULT_MODEL_ROOT) -> Dic
         "model_root": str(root),
         "required_models": sorted(MODEL_PATHS.keys()),
         "missing": missing,
+        "bundle": load_model_bundle_manifest(root),
     }
 
 

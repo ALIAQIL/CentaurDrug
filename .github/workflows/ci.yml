@@ -45,8 +45,8 @@ jobs:
         run: uv python install
 
       - name: Install dependencies
-        # Why: syncing the project plus dev extras gives CI both runtime packages and test/lint tools.
-        run: uv sync --extra dev
+        # Why: tests import runtime, training, plotting, and dev tooling.
+        run: uv sync --locked --group dev --group training
 
       - name: Lint
         # Why: ruff catches syntax, import, and style issues before slower tests or deploy steps run.
@@ -97,8 +97,8 @@ jobs:
         run: uv python install
 
       - name: Install dependencies
-        # Why: joblib and numpy are needed to create importable smoke artifacts.
-        run: uv sync --extra dev
+        # Why: the smoke artifact helper needs runtime packages plus test helpers.
+        run: uv sync --locked --group dev
 
       - name: Generate smoke model artifacts
         # Why: production images receive models by mount, so CI creates a tiny mounted model panel.

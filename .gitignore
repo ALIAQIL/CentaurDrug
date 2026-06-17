@@ -4,6 +4,8 @@ __pycache__/
 .env
 mlruns/
 /models/
+/model_bundles/
+/centaurdrug-dvc-remote/
 /prototypes/models/
 data/raw/
 data/processed/

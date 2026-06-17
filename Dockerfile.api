@@ -7,8 +7,8 @@ ENV CENTAURDRUG_MODEL_ROOT=/app/models/admet_xgboost
 ENV CENTAURDRUG_ALLOWED_MODEL_ROOTS=/app/models/admet_xgboost
 ENV CENTAURDRUG_REQUIRE_MODELS_ON_STARTUP=1
 
-COPY pyproject.toml ./
-RUN pip install --no-cache-dir uv && uv sync --no-dev
+COPY pyproject.toml uv.lock ./
+RUN pip install --no-cache-dir uv && uv sync --locked --no-dev --no-install-project
 
 COPY . .
 

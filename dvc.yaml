@@ -4,6 +4,7 @@ stages:
     deps:
       - configs/training.yaml
       - pyproject.toml
+      - uv.lock
       - src/models/datasets.py
       - src/models/featurizers.py
       - src/models/metrics.py
@@ -31,6 +32,7 @@ stages:
     deps:
       - configs/training.yaml
       - pyproject.toml
+      - uv.lock
       - src/models/datasets.py
       - src/models/featurizers.py
       - src/models/metrics.py
@@ -58,6 +60,7 @@ stages:
     deps:
       - configs/training.yaml
       - pyproject.toml
+      - uv.lock
       - src/models/datasets.py
       - src/models/featurizers.py
       - src/models/metrics.py
@@ -85,6 +88,7 @@ stages:
     deps:
       - configs/training.yaml
       - pyproject.toml
+      - uv.lock
       - src/models/datasets.py
       - src/models/featurizers.py
       - src/models/metrics.py
@@ -112,6 +116,7 @@ stages:
     deps:
       - configs/training.yaml
       - pyproject.toml
+      - uv.lock
       - src/models/datasets.py
       - src/models/featurizers.py
       - src/models/metrics.py

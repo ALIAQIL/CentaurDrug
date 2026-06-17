@@ -1,0 +1,16 @@
+model_panel:
+  name: centaurdrug-admet-panel
+  model_root: models/admet_xgboost
+
+bundle:
+  output_root: model_bundles
+  runtime_model_subdir: admet_xgboost
+
+dvc:
+  remote_name: local-model-store
+  remote_url: ../centaurdrug-dvc-remote
+
+mlflow:
+  experiment_name: centaurdrug-model-delivery
+  registered_model_name: centaurdrug-admet-panel
+  artifact_path: model_bundle
