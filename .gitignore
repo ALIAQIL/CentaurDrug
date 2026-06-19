@@ -1,4 +1,5 @@
 .venv/
+.airflow/
 __pycache__/
 *.pyc
 .env

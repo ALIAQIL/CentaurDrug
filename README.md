@@ -753,7 +753,7 @@ runtime.
 
 ## Kubernetes
 
-The implemented Kubernetes manifest is:
+The core API Kubernetes manifest is:
 
 ```text
 k8s/api-deployment.yaml
@@ -773,8 +773,35 @@ The readiness probe is especially important in an ML application. A pod can be
 alive but not useful if the model files are missing. `/ready` prevents traffic
 from going to pods that do not have the full ADMET model panel.
 
-`k8s/mlflow-deployment.yaml` and `k8s/airflow-deployment.yaml` are currently
-empty placeholders. MLflow and Airflow deployment are future work.
+The optional MLOps manifests are:
+
+```text
+k8s/mlflow-deployment.yaml
+k8s/airflow-deployment.yaml
+```
+
+`k8s/mlflow-deployment.yaml` defines a PVC-backed MLflow tracking server on
+port 5000 with SQLite metadata and local artifact storage under `/mlflow`.
+Inside the cluster, clients can use:
+
+```bash
+MLFLOW_TRACKING_URI=http://centaurdrug-mlflow-service:5000
+```
+
+`k8s/airflow-deployment.yaml` defines a small Airflow 3 deployment with:
+
+- Postgres metadata database;
+- Airflow API server on port 8080;
+- scheduler, dag processor, and triggerer containers;
+- PVCs for DAGs and logs;
+- startup database migration and default admin bootstrap;
+- health probes for Airflow API and scheduler components.
+
+The Airflow manifest is a working platform baseline, not yet the final training
+orchestration image. Before exposing it outside a private cluster, replace the
+sample Secret values. Before running the project DAGs, build an Airflow image or
+worker path that includes the CentaurDrug source, `uv`, DVC, and the training
+dependency groups.
 
 ## Testing
 
