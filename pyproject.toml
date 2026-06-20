@@ -40,6 +40,11 @@ mlops = [
     "mlflow>=3.10.1",
     "pyyaml>=6.0.3",
 ]
+mlflow-server = [
+    "google-cloud-storage>=1.30.0",
+    "mlflow[auth]>=3.10.1",
+    "psycopg2-binary>=2.9.10",
+]
 notebook = [
     "jupyter>=1.0.0",
 ]

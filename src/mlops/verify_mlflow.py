@@ -105,6 +105,64 @@ def verify_mlflow(
             f"{missing_artifacts}"
         )
 
+    with tempfile.TemporaryDirectory() as download_dir:
+        downloaded_path = Path(
+            client.download_artifacts(
+                run_id,
+                "mlflow_smoke_artifact.txt",
+                download_dir,
+            )
+        )
+        if downloaded_path.read_text(encoding="utf-8") != (
+            "centaurdrug mlflow smoke check\n"
+        ):
+            raise RuntimeError(
+                "MLflow smoke check artifact could not be downloaded correctly."
+            )
+
+    registry_name = f"centaurdrug-smoke-{run_id}"
+    registry_alias = "smoke"
+    registry_created = False
+    alias_set = False
+    model_version = None
+
+    try:
+        client.create_registered_model(registry_name)
+        registry_created = True
+        model_version = client.create_model_version(
+            name=registry_name,
+            source=run.info.artifact_uri,
+            run_id=run_id,
+        )
+        client.set_registered_model_alias(
+            registry_name,
+            registry_alias,
+            model_version.version,
+        )
+        alias_set = True
+        resolved_version = client.get_model_version_by_alias(
+            registry_name,
+            registry_alias,
+        )
+
+        if resolved_version.run_id != run_id:
+            raise RuntimeError(
+                "MLflow registry alias did not resolve to the smoke run."
+            )
+    finally:
+        if alias_set:
+            client.delete_registered_model_alias(
+                registry_name,
+                registry_alias,
+            )
+        if model_version is not None:
+            client.delete_model_version(
+                registry_name,
+                model_version.version,
+            )
+        if registry_created:
+            client.delete_registered_model(registry_name)
+
     return {
         "status": "ok",
         "tracking_uri": tracking_uri,
@@ -113,6 +171,10 @@ def verify_mlflow(
         "run_id": run_id,
         "logged_artifacts": sorted(artifact_names),
         "logged_metrics": dict(run.data.metrics),
+        "registry_check": {
+            "status": "ok",
+            "alias": registry_alias,
+        },
     }
 
 

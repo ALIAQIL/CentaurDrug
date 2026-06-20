@@ -267,6 +267,9 @@ spec:
                 name: centaurdrug-airflow-config
             - secretRef:
                 name: centaurdrug-airflow-secret
+            - secretRef:
+                name: centaurdrug-mlflow-client-secret
+                optional: true
           ports:
             - name: health
               containerPort: 8974

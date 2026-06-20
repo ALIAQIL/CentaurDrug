@@ -7,9 +7,21 @@ MLFLOW_HOST ?= 0.0.0.0
 MLFLOW_PORT ?= 5000
 MLFLOW_BACKEND_STORE_URI ?= sqlite:///mlflow.db
 MLFLOW_ARTIFACT_ROOT ?= ./mlruns
-MLFLOW_ALLOWED_HOSTS ?= localhost,127.0.0.1,0.0.0.0
+MLFLOW_ALLOWED_HOSTS ?= localhost,localhost:5000,127.0.0.1,127.0.0.1:5000,0.0.0.0,centaurdrug-mlflow-service,centaurdrug-mlflow-service:5000
+MLFLOW_CORS_ALLOWED_ORIGINS ?= http://localhost:*,http://127.0.0.1:*
 MLFLOW_TRACKING_URI ?= http://127.0.0.1:$(MLFLOW_PORT)
+MLFLOW_TRACKING_USERNAME ?=
+MLFLOW_TRACKING_PASSWORD ?=
 MLFLOW_MODEL_ALIAS ?= staging
+MLFLOW_IMAGE ?= ghcr.io/aliaqil/centaurdrug-mlflow:latest
+MLFLOW_DATABASE_URI ?=
+MLFLOW_ARTIFACTS_DESTINATION ?=
+MLFLOW_ADMIN_USERNAME ?=
+MLFLOW_ADMIN_PASSWORD ?=
+MLFLOW_FLASK_SERVER_SECRET_KEY ?=
+MLFLOW_POSTGRES_PASSWORD ?=
+MLFLOW_LOCAL_DATABASE_URI = postgresql+psycopg2://mlflow:$(MLFLOW_POSTGRES_PASSWORD)@centaurdrug-mlflow-postgres:5432/mlflow
+MLFLOW_LOCAL_ARTIFACTS_DESTINATION ?= file:///mlflow/artifacts
 AIRFLOW_HOME ?= .airflow
 AIRFLOW_USERNAME ?= admin
 AIRFLOW_PASSWORD ?= centaurdrug
@@ -30,9 +42,12 @@ K8S_AIRFLOW_LOCAL_PORT ?= 8080
 K8S = $(KUBECTL) -n $(K8S_NAMESPACE)
 
 .PHONY: \
-	test sync sync-all app run api \
-		mlflow-local mlflow-local-verify airflow-local \
-		k8s-namespace k8s-mlflow-up k8s-mlflow-port-forward k8s-mlflow-logs \
+		test sync sync-all app run api \
+			mlflow-local mlflow-local-verify mlflow-compose-up mlflow-compose-down \
+			mlflow-compose-logs airflow-local mlflow-image \
+			k8s-namespace k8s-mlflow-secret k8s-mlflow-local-secret \
+			k8s-mlflow-db-up k8s-mlflow-up k8s-mlflow-local-up \
+			k8s-mlflow-port-forward k8s-mlflow-logs \
 		airflow-image k8s-airflow-secret k8s-airflow-db-up k8s-airflow-up \
 		k8s-airflow-local-up \
 		k8s-airflow-port-forward k8s-airflow-logs \
@@ -69,7 +84,35 @@ mlflow-local:
 
 mlflow-local-verify:
 	MLFLOW_TRACKING_URI=$(MLFLOW_TRACKING_URI) \
-		uv run --group mlops python -m src.mlops.verify_mlflow --config configs/training.yaml
+		MLFLOW_TRACKING_USERNAME="$(MLFLOW_TRACKING_USERNAME)" \
+		MLFLOW_TRACKING_PASSWORD="$(MLFLOW_TRACKING_PASSWORD)" \
+			uv run --group mlops python -m src.mlops.verify_mlflow --config configs/training.yaml
+
+mlflow-compose-up:
+	@test -n "$(MLFLOW_ADMIN_USERNAME)" || (echo "Set MLFLOW_ADMIN_USERNAME."; exit 1)
+	@test -n "$(MLFLOW_ADMIN_PASSWORD)" || (echo "Set MLFLOW_ADMIN_PASSWORD."; exit 1)
+	@test -n "$(MLFLOW_FLASK_SERVER_SECRET_KEY)" || (echo "Set MLFLOW_FLASK_SERVER_SECRET_KEY."; exit 1)
+	@test -n "$(MLFLOW_POSTGRES_PASSWORD)" || (echo "Set MLFLOW_POSTGRES_PASSWORD to a URL-safe value."; exit 1)
+	MLFLOW_ADMIN_USERNAME="$(MLFLOW_ADMIN_USERNAME)" \
+		MLFLOW_ADMIN_PASSWORD="$(MLFLOW_ADMIN_PASSWORD)" \
+		MLFLOW_FLASK_SERVER_SECRET_KEY="$(MLFLOW_FLASK_SERVER_SECRET_KEY)" \
+		MLFLOW_POSTGRES_PASSWORD="$(MLFLOW_POSTGRES_PASSWORD)" \
+		docker compose up --build -d --wait --wait-timeout 300 mlflow
+	@echo "MLflow: http://127.0.0.1:$(MLFLOW_PORT)"
+
+mlflow-compose-down:
+	MLFLOW_ADMIN_USERNAME=unused \
+		MLFLOW_ADMIN_PASSWORD=unused \
+		MLFLOW_FLASK_SERVER_SECRET_KEY=unused \
+		MLFLOW_POSTGRES_PASSWORD=unused \
+		docker compose down
+
+mlflow-compose-logs:
+	MLFLOW_ADMIN_USERNAME=unused \
+		MLFLOW_ADMIN_PASSWORD=unused \
+		MLFLOW_FLASK_SERVER_SECRET_KEY=unused \
+		MLFLOW_POSTGRES_PASSWORD=unused \
+		docker compose logs -f mlflow mlflow-migrate mlflow-postgres
 
 airflow-local:
 	@mkdir -p "$(AIRFLOW_HOME)"
@@ -92,11 +135,75 @@ airflow-local:
 k8s-namespace:
 	$(KUBECTL) apply -f k8s/namespace.yaml
 
-k8s-mlflow-up: k8s-namespace
-	$(K8S) apply -f k8s/mlflow-deployment.yaml
-	$(K8S) rollout status deployment/centaurdrug-mlflow --timeout=180s
+mlflow-image:
+	docker build --file Dockerfile.mlflow --tag $(MLFLOW_IMAGE) .
+
+k8s-mlflow-secret: k8s-namespace
+	@test -n "$(MLFLOW_DATABASE_URI)" || (echo "Set MLFLOW_DATABASE_URI."; exit 1)
+	@test -n "$(MLFLOW_ARTIFACTS_DESTINATION)" || (echo "Set MLFLOW_ARTIFACTS_DESTINATION."; exit 1)
+	@test -n "$(MLFLOW_ADMIN_USERNAME)" || (echo "Set MLFLOW_ADMIN_USERNAME."; exit 1)
+	@test -n "$(MLFLOW_ADMIN_PASSWORD)" || (echo "Set MLFLOW_ADMIN_PASSWORD."; exit 1)
+	@test -n "$(MLFLOW_FLASK_SERVER_SECRET_KEY)" || (echo "Set MLFLOW_FLASK_SERVER_SECRET_KEY."; exit 1)
+	@$(K8S) create secret generic centaurdrug-mlflow-server-secret \
+		--from-literal=MLFLOW_BACKEND_STORE_URI="$(MLFLOW_DATABASE_URI)" \
+		--from-literal=MLFLOW_AUTH_DATABASE_URI="$(MLFLOW_DATABASE_URI)" \
+		--from-literal=MLFLOW_ARTIFACTS_DESTINATION="$(MLFLOW_ARTIFACTS_DESTINATION)" \
+		--from-literal=MLFLOW_ADMIN_USERNAME="$(MLFLOW_ADMIN_USERNAME)" \
+		--from-literal=MLFLOW_ADMIN_PASSWORD="$(MLFLOW_ADMIN_PASSWORD)" \
+		--from-literal=MLFLOW_FLASK_SERVER_SECRET_KEY="$(MLFLOW_FLASK_SERVER_SECRET_KEY)" \
+		--from-literal=MLFLOW_ALLOWED_HOSTS="$(MLFLOW_ALLOWED_HOSTS)" \
+		--from-literal=MLFLOW_CORS_ALLOWED_ORIGINS="$(MLFLOW_CORS_ALLOWED_ORIGINS)" \
+		--dry-run=client -o yaml | $(K8S) apply -f -
+	@$(K8S) create secret generic centaurdrug-mlflow-client-secret \
+		--from-literal=MLFLOW_TRACKING_USERNAME="$(MLFLOW_ADMIN_USERNAME)" \
+		--from-literal=MLFLOW_TRACKING_PASSWORD="$(MLFLOW_ADMIN_PASSWORD)" \
+		--dry-run=client -o yaml | $(K8S) apply -f -
+
+k8s-mlflow-local-secret: k8s-namespace
+	@test -n "$(MLFLOW_ADMIN_USERNAME)" || (echo "Set MLFLOW_ADMIN_USERNAME."; exit 1)
+	@test -n "$(MLFLOW_ADMIN_PASSWORD)" || (echo "Set MLFLOW_ADMIN_PASSWORD."; exit 1)
+	@test -n "$(MLFLOW_FLASK_SERVER_SECRET_KEY)" || (echo "Set MLFLOW_FLASK_SERVER_SECRET_KEY."; exit 1)
+	@test -n "$(MLFLOW_POSTGRES_PASSWORD)" || (echo "Set MLFLOW_POSTGRES_PASSWORD to a URL-safe value."; exit 1)
+	@$(K8S) create secret generic centaurdrug-mlflow-server-secret \
+		--from-literal=MLFLOW_BACKEND_STORE_URI="$(MLFLOW_LOCAL_DATABASE_URI)" \
+		--from-literal=MLFLOW_AUTH_DATABASE_URI="$(MLFLOW_LOCAL_DATABASE_URI)" \
+		--from-literal=MLFLOW_ARTIFACTS_DESTINATION="$(MLFLOW_LOCAL_ARTIFACTS_DESTINATION)" \
+		--from-literal=MLFLOW_ADMIN_USERNAME="$(MLFLOW_ADMIN_USERNAME)" \
+		--from-literal=MLFLOW_ADMIN_PASSWORD="$(MLFLOW_ADMIN_PASSWORD)" \
+		--from-literal=MLFLOW_FLASK_SERVER_SECRET_KEY="$(MLFLOW_FLASK_SERVER_SECRET_KEY)" \
+		--from-literal=MLFLOW_ALLOWED_HOSTS="$(MLFLOW_ALLOWED_HOSTS)" \
+		--from-literal=MLFLOW_CORS_ALLOWED_ORIGINS="$(MLFLOW_CORS_ALLOWED_ORIGINS)" \
+		--from-literal=MLFLOW_POSTGRES_PASSWORD="$(MLFLOW_POSTGRES_PASSWORD)" \
+		--dry-run=client -o yaml | $(K8S) apply -f -
+	@$(K8S) create secret generic centaurdrug-mlflow-client-secret \
+		--from-literal=MLFLOW_TRACKING_USERNAME="$(MLFLOW_ADMIN_USERNAME)" \
+		--from-literal=MLFLOW_TRACKING_PASSWORD="$(MLFLOW_ADMIN_PASSWORD)" \
+		--dry-run=client -o yaml | $(K8S) apply -f -
+
+k8s-mlflow-db-up: k8s-mlflow-local-secret
+	$(K8S) apply -f k8s/mlflow-postgres.yaml
+	$(K8S) rollout status statefulset/centaurdrug-mlflow-postgres --timeout=180s
+
+k8s-mlflow-up: k8s-mlflow-secret
+	-$(K8S) delete job centaurdrug-mlflow-migrate --ignore-not-found --wait=true
+	@sed 's|ghcr.io/aliaqil/centaurdrug-mlflow:latest|$(MLFLOW_IMAGE)|g' \
+		k8s/mlflow-migrate.yaml | $(K8S) apply -f -
+	$(K8S) wait --for=condition=complete job/centaurdrug-mlflow-migrate --timeout=300s
+	@sed 's|ghcr.io/aliaqil/centaurdrug-mlflow:latest|$(MLFLOW_IMAGE)|g' \
+		k8s/mlflow-deployment.yaml | $(K8S) apply -f -
+	$(K8S) rollout status deployment/centaurdrug-mlflow --timeout=300s
 	@echo "MLflow is inside the cluster at http://centaurdrug-mlflow-service:5000"
 	@echo "Open locally with: make k8s-mlflow-port-forward"
+
+k8s-mlflow-local-up: k8s-mlflow-db-up
+	-$(K8S) delete job centaurdrug-mlflow-migrate --ignore-not-found --wait=true
+	@sed 's|ghcr.io/aliaqil/centaurdrug-mlflow:latest|$(MLFLOW_IMAGE)|g' \
+		k8s/mlflow-migrate.yaml | $(K8S) apply -f -
+	$(K8S) wait --for=condition=complete job/centaurdrug-mlflow-migrate --timeout=300s
+	@sed 's|ghcr.io/aliaqil/centaurdrug-mlflow:latest|$(MLFLOW_IMAGE)|g' \
+		k8s/mlflow-local-deployment.yaml | $(K8S) apply -f -
+	$(K8S) rollout status deployment/centaurdrug-mlflow --timeout=300s
+	@echo "MLflow local stack is ready. Run make k8s-mlflow-port-forward."
 
 k8s-mlflow-port-forward:
 	@echo "MLflow local URL: http://127.0.0.1:$(K8S_MLFLOW_LOCAL_PORT)"
@@ -155,9 +262,15 @@ k8s-mlops-down:
 	-$(K8S) delete -f k8s/airflow-deployment.yaml --ignore-not-found
 	-$(K8S) delete -f k8s/airflow-postgres.yaml --ignore-not-found
 	-$(K8S) delete -f k8s/mlflow-deployment.yaml --ignore-not-found
+	-$(K8S) delete -f k8s/mlflow-local-deployment.yaml --ignore-not-found
+	-$(K8S) delete -f k8s/mlflow-postgres.yaml --ignore-not-found
+	-$(K8S) delete -f k8s/mlflow-migrate.yaml --ignore-not-found
 
 verify-mlflow:
-	uv run --group mlops python -m src.mlops.verify_mlflow --config configs/training.yaml
+	MLFLOW_TRACKING_URI="$(MLFLOW_TRACKING_URI)" \
+		MLFLOW_TRACKING_USERNAME="$(MLFLOW_TRACKING_USERNAME)" \
+		MLFLOW_TRACKING_PASSWORD="$(MLFLOW_TRACKING_PASSWORD)" \
+		uv run --group mlops python -m src.mlops.verify_mlflow --config configs/training.yaml
 
 dvc-remote:
 	@case "$(DVC_REMOTE_URL)" in *://*) ;; *) mkdir -p "$(DVC_REMOTE_URL)" ;; esac
@@ -176,7 +289,10 @@ verify-model-bundle:
 
 register-model-bundle:
 	@test -n "$(MODEL_BUNDLE_DIR)" || (echo "Set MODEL_BUNDLE_DIR=/path/to/bundle"; exit 1)
-	uv run --group mlops python -m src.mlops.model_delivery --config $(MODEL_DELIVERY_CONFIG) register --bundle-dir $(MODEL_BUNDLE_DIR) --alias $(MLFLOW_MODEL_ALIAS)
+	MLFLOW_TRACKING_URI="$(MLFLOW_TRACKING_URI)" \
+		MLFLOW_TRACKING_USERNAME="$(MLFLOW_TRACKING_USERNAME)" \
+		MLFLOW_TRACKING_PASSWORD="$(MLFLOW_TRACKING_PASSWORD)" \
+		uv run --group mlops python -m src.mlops.model_delivery --config $(MODEL_DELIVERY_CONFIG) register --bundle-dir $(MODEL_BUNDLE_DIR) --alias $(MLFLOW_MODEL_ALIAS)
 
 train-sol:
 	uv run python -m src.models.train_admet_xgboost --config configs/training.yaml --dataset Solubility_AqSolDB

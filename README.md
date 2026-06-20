@@ -57,9 +57,9 @@ context-aware chat assistant.
 | Candidate explanations | Implemented | Score vector, delta vs parent, improvements, tradeoffs, scaffold preservation, synthetic accessibility proxy. |
 | Backend API | Implemented | FastAPI endpoints for health, readiness, rules, evaluation, optimization, chat, and metrics. |
 | Frontend UI | Implemented | Static HTML/CSS/JavaScript served directly by FastAPI. |
-| MLOps/DevOps | Implemented prototype | DVC training stages, MLflow verification, Docker, Compose, GitHub Actions, GHCR, Kubernetes API manifest. |
+| MLOps/DevOps | Implemented prototype | DVC, bundle registry handoff, locked MLflow/Airflow images, Compose, CI/CD, and Kubernetes manifests. |
 | Scientific reliability | Limited | Predictions need more validation, more datasets, uncertainty, and expert review. |
-| Production readiness | Not yet | Needs model registry/promotion, monitoring, security hardening, resource limits, and model governance. |
+| Production readiness | Not yet | Needs ingress/TLS, monitoring, dedicated service identities, and model governance. |
 
 ## Features
 
@@ -99,7 +99,7 @@ context-aware chat assistant.
 - Package the app in a Docker API image.
 - Run local integration with Docker Compose.
 - Validate CI with tests, linting, API smoke test, and container smoke test.
-- Deploy the API to Kubernetes with liveness and readiness probes.
+- Deploy the API, Airflow, and MLflow to Kubernetes with health probes and externalized secrets.
 
 ## Architecture
 
@@ -124,7 +124,7 @@ Training and MLOps layer
 
 DevOps layer
     -> pytest and ruff
-    -> Docker API image
+    -> locked API, Airflow, and MLflow images
     -> container smoke tests
     -> GHCR publishing
     -> Kubernetes deployment
@@ -137,9 +137,13 @@ configs/
     training.yaml              Training, feature, split, and dataset config
 dags/
     centaurdrug_training_pipeline.py
-                               Airflow prototype DAG
+                               Five-model training and bundle delivery DAG
 k8s/
-    api-deployment.yaml        Kubernetes API deployment, service, PVC, probes
+    api-deployment.yaml        API deployment, service, PVC, and probes
+    airflow-deployment.yaml    Split Airflow components and migration job
+    mlflow-deployment.yaml     Production MLflow deployment and service
+    mlflow-migrate.yaml        Tracking and auth database migrations
+    mlflow-postgres.yaml       Local-only PostgreSQL StatefulSet
 src/api/
     main.py                    FastAPI app and REST endpoints
 src/agent/
@@ -169,6 +173,8 @@ src/ui/static/
 tests/
     test_*.py                  Unit and integration tests
 Dockerfile.api                 API image definition
+Dockerfile.airflow             Locked training and orchestration image
+Dockerfile.mlflow              Locked MLflow server image
 docker-compose.yml             Local API + MLflow services
 dvc.yaml                       DVC training stages
 Makefile                       Local commands
@@ -191,7 +197,7 @@ Makefile                       Local commands
 | DVC | Reproducible training stages and model output tracking. |
 | Docker | Runtime packaging. |
 | Docker Compose | Local multi-service execution. |
-| Kubernetes | API deployment, service, PVC, liveness and readiness probes. |
+| Kubernetes | API, Airflow, MLflow, migrations, services, storage, and health probes. |
 | GitHub Actions | CI/CD automation. |
 | GHCR | Container image registry. |
 | pytest | Automated tests. |
@@ -555,7 +561,9 @@ docker compose up --build
 Register a verified bundle in MLflow:
 
 ```bash
-export MLFLOW_TRACKING_URI=sqlite:///mlflow.db
+export MLFLOW_TRACKING_URI=http://127.0.0.1:5000
+export MLFLOW_TRACKING_USERNAME=admin
+export MLFLOW_TRACKING_PASSWORD='<your-mlflow-password>'
 make register-model-bundle \
   MODEL_BUNDLE_DIR=model_bundles/centaurdrug-admet-panel/<version> \
   MLFLOW_MODEL_ALIAS=staging
@@ -563,6 +571,43 @@ make register-model-bundle \
 
 The registry entry points to the logged bundle artifact. This is a registry
 handoff for the full ADMET panel, not a single MLflow pyfunc model.
+
+## MLflow Deployment
+
+The production MLflow manifest deliberately has no SQLite file or artifact PVC.
+It runs two authenticated server replicas against:
+
+- PostgreSQL for experiment, registry, and auth metadata;
+- GCS for proxied run and model-bundle artifacts;
+- a pre-deployment Job for both tracking and auth schema migrations;
+- the locked `Dockerfile.mlflow` image published with the commit SHA.
+
+Create these GitHub Environment secrets before enabling production deployment:
+
+- `MLFLOW_DATABASE_URI`
+- `MLFLOW_ARTIFACTS_DESTINATION`, such as `gs://centaurdrug-mlflow/artifacts`
+- `MLFLOW_ADMIN_USERNAME`
+- `MLFLOW_ADMIN_PASSWORD`
+- `MLFLOW_FLASK_SERVER_SECRET_KEY`
+- `MLFLOW_ALLOWED_HOSTS`
+- `MLFLOW_CORS_ALLOWED_ORIGINS`
+
+On GKE, grant the `centaurdrug-mlflow` Kubernetes service account access to the
+artifact bucket through Workload Identity. The Kubernetes annotation is:
+
+```bash
+kubectl -n centaurdrug annotate serviceaccount centaurdrug-mlflow \
+  iam.gke.io/gcp-service-account=centaurdrug-mlflow@<project-id>.iam.gserviceaccount.com
+```
+
+`MLFLOW_DATABASE_URI` must point to a reachable Cloud SQL PostgreSQL endpoint or
+proxy. `MLFLOW_ALLOWED_HOSTS` must include `centaurdrug-mlflow-service`,
+`centaurdrug-mlflow-service:5000`, and any external MLflow hostname. Do not
+commit the database URI because it normally contains credentials.
+
+MLflow currently labels its built-in basic-auth application experimental. Keep
+the service private; if it is exposed outside the cluster, terminate TLS and
+enforce an identity-aware proxy such as GCP IAP in front of it.
 
 ## Local Development
 
@@ -608,16 +653,24 @@ Run a sample agent search:
 make agent-search
 ```
 
-Verify MLflow:
+Start the realistic local MLflow stack with PostgreSQL, basic auth, and a
+persistent artifact volume:
 
 ```bash
-make verify-mlflow
+export MLFLOW_ADMIN_USERNAME=admin
+export MLFLOW_ADMIN_PASSWORD="$(openssl rand -hex 24)"
+export MLFLOW_FLASK_SERVER_SECRET_KEY="$(openssl rand -hex 32)"
+export MLFLOW_POSTGRES_PASSWORD="$(openssl rand -hex 24)"
+make mlflow-compose-up
 ```
 
-Open MLflow locally:
+Then verify tracking, artifact download, registry version creation, and alias
+resolution against the authenticated server:
 
 ```bash
-uv run mlflow ui --host 0.0.0.0 --port 5000
+make mlflow-local-verify \
+  MLFLOW_TRACKING_USERNAME="$MLFLOW_ADMIN_USERNAME" \
+  MLFLOW_TRACKING_PASSWORD="$MLFLOW_ADMIN_PASSWORD"
 ```
 
 Then visit:
@@ -634,16 +687,21 @@ Build the API image:
 docker build -f Dockerfile.api -t centaurdrug-api .
 ```
 
-Run with Docker Compose:
+Run the API and authenticated MLflow stack with Docker Compose:
 
 ```bash
+export MLFLOW_ADMIN_USERNAME=admin
+export MLFLOW_ADMIN_PASSWORD='<local-password>'
+export MLFLOW_FLASK_SERVER_SECRET_KEY='<random-64-hex-value>'
+export MLFLOW_POSTGRES_PASSWORD='<url-safe-local-password>'
 docker compose up --build
 ```
 
 Compose starts:
 
 - API and UI on `http://localhost:8000`
-- MLflow on `http://localhost:5000`
+- authenticated MLflow on `http://localhost:5000`
+- PostgreSQL on the private Compose network
 
 The API service mounts:
 
@@ -685,10 +743,16 @@ MLflow is used for experiment tracking. The helper
 - log metrics;
 - log a text artifact;
 - log a plot artifact;
-- read the run back.
+- download the artifact through the server;
+- create a temporary Model Registry version and resolve its alias.
 
 `src/mlops/model_delivery.py` can also log a verified model bundle and create a
 Model Registry version for `centaurdrug-admet-panel`.
+
+The local Kubernetes equivalent is `make k8s-mlflow-local-up`; it uses
+`k8s/mlflow-postgres.yaml` and a single MLflow replica with a persistent local
+artifact volume. Production uses `make k8s-mlflow-up` with an external
+PostgreSQL URI and object-store destination instead.
 
 ### Smoke Model Artifacts
 
@@ -739,15 +803,15 @@ Pipeline jobs:
    - call `/evaluate`.
 
 3. `Container image`
-   - build the API and custom Airflow images with Docker Buildx;
+   - build the API, custom Airflow, and locked MLflow images with Docker Buildx;
    - publish to GitHub Container Registry on main, tags, or manual runs;
-   - publish immutable `sha-<commit>` tags for both images.
+   - publish immutable `sha-<commit>` tags for all three images.
 
 4. `Deploy to Kubernetes`
    - applies the `centaurdrug` Namespace and API, MLflow, and Airflow manifests;
-   - creates `centaurdrug-airflow-secret` from GitHub Secrets;
-   - runs the Airflow database migration Job;
-   - deploys the exact API and Airflow `sha-<commit>` images;
+   - creates the Airflow and MLflow server/client Secrets from GitHub Secrets;
+   - runs the MLflow and Airflow database migration Jobs;
+   - deploys the exact API, MLflow, and Airflow `sha-<commit>` images;
    - waits for every rollout;
    - skips clearly if `KUBE_CONFIG` is not configured.
 
@@ -781,16 +845,33 @@ The optional MLOps manifests are:
 ```text
 k8s/namespace.yaml
 k8s/mlflow-deployment.yaml
+k8s/mlflow-local-deployment.yaml
+k8s/mlflow-migrate.yaml
+k8s/mlflow-postgres.yaml
 k8s/airflow-deployment.yaml
 k8s/airflow-postgres.yaml
 ```
 
-`k8s/mlflow-deployment.yaml` defines a PVC-backed MLflow tracking server on
-port 5000 with SQLite metadata and local artifact storage under `/mlflow`.
-Inside the cluster, clients can use:
+`k8s/mlflow-deployment.yaml` defines two non-root MLflow replicas on port 5000.
+The production path requires PostgreSQL and an object-store artifact destination,
+uses basic authentication, runs explicit schema migrations, and has no shared
+filesystem dependency. Inside the cluster, authenticated clients use:
 
 ```bash
 MLFLOW_TRACKING_URI=http://centaurdrug-mlflow-service:5000
+MLFLOW_TRACKING_USERNAME=<client-user>
+MLFLOW_TRACKING_PASSWORD=<client-password>
+```
+
+The local Kubernetes path uses `k8s/mlflow-postgres.yaml` plus
+`k8s/mlflow-local-deployment.yaml`, which intentionally reduces MLflow to one
+replica and mounts a persistent artifact volume. Start it with the same generated
+credentials used for Compose:
+
+```bash
+make mlflow-image
+make k8s-mlflow-local-up
+make k8s-mlflow-port-forward
 ```
 
 `Dockerfile.airflow` extends Airflow 3.2.2 with the locked CentaurDrug runtime,
