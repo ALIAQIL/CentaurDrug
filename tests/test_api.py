@@ -3,7 +3,7 @@ from fastapi.testclient import TestClient
 from src.api import main
 
 
-client = TestClient(main.app)
+client = TestClient(main.app, backend_options={"use_uvloop": True})
 
 
 def test_index_serves_frontend():

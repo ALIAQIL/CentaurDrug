@@ -20,8 +20,10 @@ dependencies = [
 
 [dependency-groups]
 dev = [
+    "httpx2>=2.4.0",
     "pytest>=9.0.0",
     "ruff>=0.14.0",
+    "uvloop>=0.22.1",
 ]
 training = [
     "matplotlib>=3.7.2",
@@ -43,6 +45,7 @@ notebook = [
 ]
 orchestration = [
     "apache-airflow>=3.2.1",
+    "apache-airflow-providers-fab==3.6.4",
 ]
 
 [tool.uv.workspace]

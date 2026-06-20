@@ -722,8 +722,9 @@ Pipeline jobs:
    - checkout;
    - install uv;
    - install project Python;
-   - `uv sync --locked --group dev --group training`;
-   - `ruff check src tests`;
+   - install the locked dev, training, MLOps, and orchestration groups;
+   - `ruff check src tests dags`;
+   - import the production Airflow DAG;
    - `pytest`;
    - start FastAPI and call `/health`.
 
@@ -738,14 +739,16 @@ Pipeline jobs:
    - call `/evaluate`.
 
 3. `Container image`
-   - build the API image with Docker Buildx;
+   - build the API and custom Airflow images with Docker Buildx;
    - publish to GitHub Container Registry on main, tags, or manual runs;
-   - image name pattern: `ghcr.io/<owner>/<repo>-api`.
+   - publish immutable `sha-<commit>` tags for both images.
 
 4. `Deploy to Kubernetes`
-   - applies `k8s/api-deployment.yaml`;
-   - sets the deployment image to the exact `sha-<commit>` tag;
-   - waits for rollout status;
+   - applies the `centaurdrug` Namespace and API, MLflow, and Airflow manifests;
+   - creates `centaurdrug-airflow-secret` from GitHub Secrets;
+   - runs the Airflow database migration Job;
+   - deploys the exact API and Airflow `sha-<commit>` images;
+   - waits for every rollout;
    - skips clearly if `KUBE_CONFIG` is not configured.
 
 This pipeline validates not only Python code, but also the real packaged API
@@ -776,8 +779,10 @@ from going to pods that do not have the full ADMET model panel.
 The optional MLOps manifests are:
 
 ```text
+k8s/namespace.yaml
 k8s/mlflow-deployment.yaml
 k8s/airflow-deployment.yaml
+k8s/airflow-postgres.yaml
 ```
 
 `k8s/mlflow-deployment.yaml` defines a PVC-backed MLflow tracking server on
@@ -788,20 +793,38 @@ Inside the cluster, clients can use:
 MLFLOW_TRACKING_URI=http://centaurdrug-mlflow-service:5000
 ```
 
-`k8s/airflow-deployment.yaml` defines a small Airflow 3 deployment with:
+`Dockerfile.airflow` extends Airflow 3.2.2 with the locked CentaurDrug runtime,
+training and MLOps groups, source code, DVC pipeline, and DAGs. No DAG PVC or
+manual `kubectl cp` step is required.
 
-- Postgres metadata database;
-- Airflow API server on port 8080;
-- scheduler, dag processor, and triggerer containers;
-- PVCs for DAGs and logs;
-- startup database migration and default admin bootstrap;
-- health probes for Airflow API and scheduler components.
+`k8s/airflow-deployment.yaml` keeps the Airflow API server, scheduler, DAG
+processor, and triggerer in separate Deployments. A migration Job bootstraps
+the database and administrator, while a scheduler-only PVC persists trained
+models, bundles, and the DVC cache. The manifest contains no Secret values.
 
-The Airflow manifest is a working platform baseline, not yet the final training
-orchestration image. Before exposing it outside a private cluster, replace the
-sample Secret values. Before running the project DAGs, build an Airflow image or
-worker path that includes the CentaurDrug source, `uv`, DVC, and the training
-dependency groups.
+For GCP production, store the Airflow metadata database in Cloud SQL and set
+the `AIRFLOW_DATABASE_URI` GitHub Secret to its PostgreSQL SQLAlchemy URI. The
+other required GitHub Secrets are `AIRFLOW_ADMIN_PASSWORD`,
+`AIRFLOW_FERNET_KEY`, `AIRFLOW_JWT_SECRET`, and
+`AIRFLOW_POSTGRES_PASSWORD`. The latter is used only by the optional in-cluster
+database manifest.
+
+For local Kubernetes testing, create strong values and start the optional
+PostgreSQL StatefulSet with Airflow:
+
+```bash
+export AIRFLOW_POSTGRES_PASSWORD="$(openssl rand -hex 24)"
+export AIRFLOW_DATABASE_URI="postgresql+psycopg2://airflow:${AIRFLOW_POSTGRES_PASSWORD}@centaurdrug-airflow-postgres:5432/airflow"
+export AIRFLOW_ADMIN_PASSWORD="$(openssl rand -base64 32)"
+export AIRFLOW_FERNET_KEY="$(uv run --group orchestration python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())')"
+export AIRFLOW_JWT_SECRET="$(openssl rand -hex 32)"
+make k8s-airflow-local-up
+```
+
+For Cloud SQL, run `make k8s-airflow-up` instead; it deploys Airflow without the
+in-cluster PostgreSQL StatefulSet. The weekly DAG trains all five DVC stages in
+sequence, verifies the model panel, creates a versioned bundle, and registers
+it in MLflow under the `staging` alias.
 
 ## Testing
 

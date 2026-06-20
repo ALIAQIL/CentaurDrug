@@ -2,6 +2,7 @@ apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: centaurdrug-mlflow-pvc
+  namespace: centaurdrug
   labels:
     app.kubernetes.io/name: centaurdrug
     app.kubernetes.io/component: mlflow
@@ -16,6 +17,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: centaurdrug-mlflow
+  namespace: centaurdrug
   labels:
     app.kubernetes.io/name: centaurdrug
     app.kubernetes.io/component: mlflow
@@ -83,6 +85,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: centaurdrug-mlflow-service
+  namespace: centaurdrug
   labels:
     app.kubernetes.io/name: centaurdrug
     app.kubernetes.io/component: mlflow

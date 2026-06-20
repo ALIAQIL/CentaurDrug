@@ -46,11 +46,15 @@ jobs:
 
       - name: Install dependencies
         # Why: tests import runtime, training, plotting, and dev tooling.
-        run: uv sync --locked --group dev --group training
+        run: uv sync --locked --group dev --group training --group mlops --group orchestration
 
       - name: Lint
         # Why: ruff catches syntax, import, and style issues before slower tests or deploy steps run.
-        run: uv run ruff check src tests
+        run: uv run ruff check src tests dags
+
+      - name: Validate Airflow DAG imports
+        # Why: executing the DAG module catches broken Airflow imports and task construction before image build.
+        run: uv run --group orchestration python dags/centaurdrug_training_pipeline.py
 
       - name: Tests
         # Why: pytest verifies the API, model helpers, agent logic, and validation code still behave.
@@ -168,30 +172,63 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Prepare image tags
-        id: meta
+      - name: Prepare lowercase image names
+        id: image_names
+        # Why: GHCR rejects repository paths that contain uppercase characters.
+        run: |
+          image_repo="${GITHUB_REPOSITORY,,}"
+          echo "api=ghcr.io/${image_repo}-api" >> "$GITHUB_OUTPUT"
+          echo "airflow=ghcr.io/${image_repo}-airflow" >> "$GITHUB_OUTPUT"
+
+      - name: Prepare API image tags
+        id: api_meta
         # Why: metadata-action creates consistent tags such as sha-..., main, latest, and release tags.
         uses: docker/metadata-action@v6.1.0
         with:
-          images: ${{ env.REGISTRY }}/${{ github.repository }}-api
+          images: ${{ steps.image_names.outputs.api }}
           tags: |
             type=raw,value=sha-${{ github.sha }}
             type=ref,event=branch
             type=ref,event=tag
             type=raw,value=latest,enable={{is_default_branch}}
 
-      - name: Build image
-        id: build
+      - name: Build API image
+        id: api_build
         # Why: PRs validate that Docker builds; main/tags/manual runs also publish the image.
         uses: docker/build-push-action@v7.2.0
         with:
           context: .
           file: ./Dockerfile.api
           push: ${{ github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v') }}
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
+          tags: ${{ steps.api_meta.outputs.tags }}
+          labels: ${{ steps.api_meta.outputs.labels }}
           cache-from: type=gha,scope=api
           cache-to: type=gha,scope=api,mode=max
+
+      - name: Prepare Airflow image tags
+        id: airflow_meta
+        # Why: the scheduler image is versioned independently but uses the same immutable commit tag.
+        uses: docker/metadata-action@v6.1.0
+        with:
+          images: ${{ steps.image_names.outputs.airflow }}
+          tags: |
+            type=raw,value=sha-${{ github.sha }}
+            type=ref,event=branch
+            type=ref,event=tag
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build Airflow image
+        id: airflow_build
+        # Why: this image carries the locked training stack, project source, and versioned DAGs.
+        uses: docker/build-push-action@v7.2.0
+        with:
+          context: .
+          file: ./Dockerfile.airflow
+          push: ${{ github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v') }}
+          tags: ${{ steps.airflow_meta.outputs.tags }}
+          labels: ${{ steps.airflow_meta.outputs.labels }}
+          cache-from: type=gha,scope=airflow
+          cache-to: type=gha,scope=airflow,mode=max
 
   deploy:
     name: Deploy to Kubernetes
@@ -215,6 +252,7 @@ jobs:
         run: |
           image_repo="${GITHUB_REPOSITORY,,}"
           echo "API_IMAGE=ghcr.io/${image_repo}-api:sha-${GITHUB_SHA}" >> "$GITHUB_ENV"
+          echo "AIRFLOW_IMAGE=ghcr.io/${image_repo}-airflow:sha-${GITHUB_SHA}" >> "$GITHUB_ENV"
 
           if [ -n "$KUBE_CONFIG" ]; then
             echo "has_kube_config=true" >> "$GITHUB_OUTPUT"
@@ -238,15 +276,65 @@ jobs:
           version: latest
 
       - name: Apply manifests and deploy images
-        # Why: apply creates/updates the services, then set image rolls out the exact commit that passed CI.
+        # Why: GitHub Secrets create the runtime Secret without committing credentials, and every pod gets the tested SHA image.
         if: ${{ steps.deploy_config.outputs.has_kube_config == 'true' }}
+        env:
+          AIRFLOW_DATABASE_URI: ${{ secrets.AIRFLOW_DATABASE_URI }}
+          AIRFLOW_ADMIN_PASSWORD: ${{ secrets.AIRFLOW_ADMIN_PASSWORD }}
+          AIRFLOW_FERNET_KEY: ${{ secrets.AIRFLOW_FERNET_KEY }}
+          AIRFLOW_JWT_SECRET: ${{ secrets.AIRFLOW_JWT_SECRET }}
+          AIRFLOW_POSTGRES_PASSWORD: ${{ secrets.AIRFLOW_POSTGRES_PASSWORD }}
         run: |
           set -euo pipefail
+          for secret_name in \
+            AIRFLOW_DATABASE_URI \
+            AIRFLOW_ADMIN_PASSWORD \
+            AIRFLOW_FERNET_KEY \
+            AIRFLOW_JWT_SECRET; do
+            if [ -z "${!secret_name}" ]; then
+              echo "Required GitHub Secret ${secret_name} is not configured."
+              exit 1
+            fi
+          done
+
+          kubectl apply -f k8s/namespace.yaml
+          secret_args=(
+            --from-literal=AIRFLOW__DATABASE__SQL_ALCHEMY_CONN="$AIRFLOW_DATABASE_URI"
+            --from-literal=AIRFLOW__CORE__FERNET_KEY="$AIRFLOW_FERNET_KEY"
+            --from-literal=AIRFLOW__API_AUTH__JWT_SECRET="$AIRFLOW_JWT_SECRET"
+            --from-literal=AIRFLOW_ADMIN_USERNAME=admin
+            --from-literal=AIRFLOW_ADMIN_PASSWORD="$AIRFLOW_ADMIN_PASSWORD"
+          )
+          if [ -n "$AIRFLOW_POSTGRES_PASSWORD" ]; then
+            secret_args+=(--from-literal=POSTGRES_PASSWORD="$AIRFLOW_POSTGRES_PASSWORD")
+          fi
+          kubectl -n centaurdrug create secret generic centaurdrug-airflow-secret \
+            "${secret_args[@]}" \
+            --dry-run=client -o yaml | kubectl apply -f -
+
           kubectl apply -f k8s/api-deployment.yaml
-          kubectl set image deployment/centaurdrug-api api="$API_IMAGE"
+          kubectl apply -f k8s/mlflow-deployment.yaml
+          kubectl -n centaurdrug set image deployment/centaurdrug-api api="$API_IMAGE"
+
+          kubectl -n centaurdrug delete job centaurdrug-airflow-migrate \
+            --ignore-not-found --wait=true
+          sed "s|ghcr.io/aliaqil/centaurdrug-airflow:latest|${AIRFLOW_IMAGE}|g" \
+            k8s/airflow-deployment.yaml | kubectl apply -f -
+
+          if ! kubectl -n centaurdrug wait \
+            --for=condition=complete job/centaurdrug-airflow-migrate \
+            --timeout=300s; then
+            kubectl -n centaurdrug logs job/centaurdrug-airflow-migrate
+            exit 1
+          fi
 
       - name: Wait for rollout
         # Why: the workflow should fail if Kubernetes cannot start the new pods successfully.
         if: ${{ steps.deploy_config.outputs.has_kube_config == 'true' }}
         run: |
-          kubectl rollout status deployment/centaurdrug-api --timeout=180s
+          kubectl -n centaurdrug rollout status deployment/centaurdrug-api --timeout=180s
+          kubectl -n centaurdrug rollout status deployment/centaurdrug-mlflow --timeout=180s
+          kubectl -n centaurdrug rollout status deployment/centaurdrug-airflow-api-server --timeout=300s
+          kubectl -n centaurdrug rollout status deployment/centaurdrug-airflow-scheduler --timeout=300s
+          kubectl -n centaurdrug rollout status deployment/centaurdrug-airflow-dag-processor --timeout=300s
+          kubectl -n centaurdrug rollout status deployment/centaurdrug-airflow-triggerer --timeout=300s

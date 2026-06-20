@@ -15,18 +15,27 @@ AIRFLOW_USERNAME ?= admin
 AIRFLOW_PASSWORD ?= centaurdrug
 AIRFLOW_ROLE ?= admin
 AIRFLOW_MLFLOW_TRACKING_URI ?= sqlite:///mlflow.db
-AIRFLOW_CONTAINER ?= api-server
+AIRFLOW_IMAGE ?= ghcr.io/aliaqil/centaurdrug-airflow:latest
+AIRFLOW_ADMIN_USERNAME ?= admin
+AIRFLOW_DATABASE_URI ?=
+AIRFLOW_ADMIN_PASSWORD ?=
+AIRFLOW_FERNET_KEY ?=
+AIRFLOW_JWT_SECRET ?=
+AIRFLOW_POSTGRES_PASSWORD ?=
+AIRFLOW_COMPONENT ?= scheduler
 KUBECTL ?= kubectl
-K8S_NAMESPACE ?= default
+K8S_NAMESPACE ?= centaurdrug
 K8S_MLFLOW_LOCAL_PORT ?= 5000
 K8S_AIRFLOW_LOCAL_PORT ?= 8080
 K8S = $(KUBECTL) -n $(K8S_NAMESPACE)
 
 .PHONY: \
 	test sync sync-all app run api \
-	mlflow-local mlflow-local-verify airflow-local \
-	k8s-namespace k8s-mlflow-up k8s-mlflow-port-forward k8s-mlflow-logs \
-	k8s-airflow-up k8s-airflow-sync-dags k8s-airflow-port-forward k8s-airflow-logs \
+		mlflow-local mlflow-local-verify airflow-local \
+		k8s-namespace k8s-mlflow-up k8s-mlflow-port-forward k8s-mlflow-logs \
+		airflow-image k8s-airflow-secret k8s-airflow-db-up k8s-airflow-up \
+		k8s-airflow-local-up \
+		k8s-airflow-port-forward k8s-airflow-logs \
 	k8s-mlops-up k8s-mlops-down \
 	verify-mlflow train-sol train-lipo train-ames train-herg train-cyp3a4 \
 	train-phase1 predict-sol dvc-remote dvc-push bundle-models \
@@ -81,10 +90,7 @@ airflow-local:
 	uv run --group orchestration --group mlops --group training airflow standalone
 
 k8s-namespace:
-	@if [ "$(K8S_NAMESPACE)" != "default" ]; then \
-		$(KUBECTL) get namespace "$(K8S_NAMESPACE)" >/dev/null 2>&1 || \
-		$(KUBECTL) create namespace "$(K8S_NAMESPACE)"; \
-	fi
+	$(KUBECTL) apply -f k8s/namespace.yaml
 
 k8s-mlflow-up: k8s-namespace
 	$(K8S) apply -f k8s/mlflow-deployment.yaml
@@ -99,35 +105,55 @@ k8s-mlflow-port-forward:
 k8s-mlflow-logs:
 	$(K8S) logs -f deployment/centaurdrug-mlflow -c mlflow
 
-k8s-airflow-up: k8s-namespace
-	$(K8S) apply -f k8s/airflow-deployment.yaml
-	$(K8S) rollout status deployment/centaurdrug-airflow-postgres --timeout=180s
-	$(K8S) rollout status deployment/centaurdrug-airflow --timeout=300s
+airflow-image:
+	docker build --file Dockerfile.airflow --tag $(AIRFLOW_IMAGE) .
+
+k8s-airflow-secret: k8s-namespace
+	@test -n "$(AIRFLOW_DATABASE_URI)" || (echo "Set AIRFLOW_DATABASE_URI."; exit 1)
+	@test -n "$(AIRFLOW_ADMIN_PASSWORD)" || (echo "Set AIRFLOW_ADMIN_PASSWORD."; exit 1)
+	@test -n "$(AIRFLOW_FERNET_KEY)" || (echo "Set AIRFLOW_FERNET_KEY."; exit 1)
+	@test -n "$(AIRFLOW_JWT_SECRET)" || (echo "Set AIRFLOW_JWT_SECRET."; exit 1)
+	@$(K8S) create secret generic centaurdrug-airflow-secret \
+		--from-literal=AIRFLOW__DATABASE__SQL_ALCHEMY_CONN="$(AIRFLOW_DATABASE_URI)" \
+		--from-literal=AIRFLOW__CORE__FERNET_KEY="$(AIRFLOW_FERNET_KEY)" \
+		--from-literal=AIRFLOW__API_AUTH__JWT_SECRET="$(AIRFLOW_JWT_SECRET)" \
+		--from-literal=AIRFLOW_ADMIN_USERNAME="$(AIRFLOW_ADMIN_USERNAME)" \
+		--from-literal=AIRFLOW_ADMIN_PASSWORD="$(AIRFLOW_ADMIN_PASSWORD)" \
+		--from-literal=POSTGRES_PASSWORD="$(AIRFLOW_POSTGRES_PASSWORD)" \
+		--dry-run=client -o yaml | $(K8S) apply -f -
+
+k8s-airflow-db-up: k8s-airflow-secret
+	@test -n "$(AIRFLOW_POSTGRES_PASSWORD)" || (echo "Set AIRFLOW_POSTGRES_PASSWORD."; exit 1)
+	$(K8S) apply -f k8s/airflow-postgres.yaml
+	$(K8S) rollout status statefulset/centaurdrug-airflow-postgres --timeout=180s
+
+k8s-airflow-up: k8s-airflow-secret
+	-$(K8S) delete job centaurdrug-airflow-migrate --ignore-not-found --wait=true
+	@sed 's|ghcr.io/aliaqil/centaurdrug-airflow:latest|$(AIRFLOW_IMAGE)|g' \
+		k8s/airflow-deployment.yaml | $(K8S) apply -f -
+	$(K8S) wait --for=condition=complete job/centaurdrug-airflow-migrate --timeout=300s
+	$(K8S) rollout status deployment/centaurdrug-airflow-api-server --timeout=300s
+	$(K8S) rollout status deployment/centaurdrug-airflow-scheduler --timeout=300s
+	$(K8S) rollout status deployment/centaurdrug-airflow-dag-processor --timeout=300s
+	$(K8S) rollout status deployment/centaurdrug-airflow-triggerer --timeout=300s
 	@echo "Airflow is inside the cluster at http://centaurdrug-airflow-service:8080"
 	@echo "Open locally with: make k8s-airflow-port-forward"
-	@echo "Sync repo DAGs with: make k8s-airflow-sync-dags"
 
-k8s-airflow-sync-dags:
-	@pod="$$( \
-		$(K8S) get pod \
-			-l app.kubernetes.io/name=centaurdrug,app.kubernetes.io/component=airflow \
-			-o jsonpath='{.items[0].metadata.name}' \
-	)"; \
-	test -n "$$pod" || (echo "Airflow pod not found. Run make k8s-airflow-up first."; exit 1); \
-	$(K8S) cp dags/. "$$pod":/opt/airflow/dags -c api-server
+k8s-airflow-local-up: k8s-airflow-db-up k8s-airflow-up
 
 k8s-airflow-port-forward:
 	@echo "Airflow local URL: http://127.0.0.1:$(K8S_AIRFLOW_LOCAL_PORT)"
 	$(K8S) port-forward service/centaurdrug-airflow-service $(K8S_AIRFLOW_LOCAL_PORT):8080
 
 k8s-airflow-logs:
-	$(K8S) logs -f deployment/centaurdrug-airflow -c $(AIRFLOW_CONTAINER)
+	$(K8S) logs -f deployment/centaurdrug-airflow-$(AIRFLOW_COMPONENT) -c $(AIRFLOW_COMPONENT)
 
 k8s-mlops-up: k8s-mlflow-up k8s-airflow-up
 	@echo "MLOps services are applied. Use the port-forward targets to open them locally."
 
 k8s-mlops-down:
 	-$(K8S) delete -f k8s/airflow-deployment.yaml --ignore-not-found
+	-$(K8S) delete -f k8s/airflow-postgres.yaml --ignore-not-found
 	-$(K8S) delete -f k8s/mlflow-deployment.yaml --ignore-not-found
 
 verify-mlflow:
