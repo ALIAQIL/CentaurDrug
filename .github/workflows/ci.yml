@@ -128,7 +128,7 @@ jobs:
 
           trap 'docker logs centaurdrug-api-smoke || true; docker rm -f centaurdrug-api-smoke || true' EXIT
 
-          for attempt in {1..30}; do
+          for _ in {1..30}; do
             if curl --fail --silent http://127.0.0.1:8000/ready; then
               break
             fi
@@ -177,9 +177,11 @@ jobs:
         # Why: GHCR rejects repository paths that contain uppercase characters.
         run: |
           image_repo="${GITHUB_REPOSITORY,,}"
-          echo "api=ghcr.io/${image_repo}-api" >> "$GITHUB_OUTPUT"
-          echo "airflow=ghcr.io/${image_repo}-airflow" >> "$GITHUB_OUTPUT"
-          echo "mlflow=ghcr.io/${image_repo}-mlflow" >> "$GITHUB_OUTPUT"
+          {
+            echo "api=ghcr.io/${image_repo}-api"
+            echo "airflow=ghcr.io/${image_repo}-airflow"
+            echo "mlflow=ghcr.io/${image_repo}-mlflow"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Prepare API image tags
         id: api_meta
@@ -277,9 +279,11 @@ jobs:
           KUBE_CONFIG: ${{ secrets.KUBE_CONFIG }}
         run: |
           image_repo="${GITHUB_REPOSITORY,,}"
-          echo "API_IMAGE=ghcr.io/${image_repo}-api:sha-${GITHUB_SHA}" >> "$GITHUB_ENV"
-          echo "AIRFLOW_IMAGE=ghcr.io/${image_repo}-airflow:sha-${GITHUB_SHA}" >> "$GITHUB_ENV"
-          echo "MLFLOW_IMAGE=ghcr.io/${image_repo}-mlflow:sha-${GITHUB_SHA}" >> "$GITHUB_ENV"
+          {
+            echo "API_IMAGE=ghcr.io/${image_repo}-api:sha-${GITHUB_SHA}"
+            echo "AIRFLOW_IMAGE=ghcr.io/${image_repo}-airflow:sha-${GITHUB_SHA}"
+            echo "MLFLOW_IMAGE=ghcr.io/${image_repo}-mlflow:sha-${GITHUB_SHA}"
+          } >> "$GITHUB_ENV"
 
           if [ -n "$KUBE_CONFIG" ]; then
             echo "has_kube_config=true" >> "$GITHUB_OUTPUT"
