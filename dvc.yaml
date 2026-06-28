@@ -138,3 +138,28 @@ stages:
     metrics:
       - models/admet_xgboost/CYP3A4_Veith/metrics.json:
           cache: false
+
+  train_baselines:
+    cmd: uv run python -m src.models.train_baseline
+    deps:
+      - pyproject.toml
+      - uv.lock
+      - src/models/train_baseline.py
+      - src/models/metrics.py
+      - models/admet_xgboost/Solubility_AqSolDB/metadata.json
+      - models/admet_xgboost/Solubility_AqSolDB/predictions.csv
+      - models/admet_xgboost/Solubility_AqSolDB/featurizer.joblib
+      - models/admet_xgboost/Lipophilicity_AstraZeneca/metadata.json
+      - models/admet_xgboost/Lipophilicity_AstraZeneca/predictions.csv
+      - models/admet_xgboost/Lipophilicity_AstraZeneca/featurizer.joblib
+      - models/admet_xgboost/AMES/metadata.json
+      - models/admet_xgboost/AMES/predictions.csv
+      - models/admet_xgboost/AMES/featurizer.joblib
+      - models/admet_xgboost/hERG/metadata.json
+      - models/admet_xgboost/hERG/predictions.csv
+      - models/admet_xgboost/hERG/featurizer.joblib
+      - models/admet_xgboost/CYP3A4_Veith/metadata.json
+      - models/admet_xgboost/CYP3A4_Veith/predictions.csv
+      - models/admet_xgboost/CYP3A4_Veith/featurizer.joblib
+    outs:
+      - models/baselines

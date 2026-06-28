@@ -52,7 +52,7 @@ K8S = $(KUBECTL) -n $(K8S_NAMESPACE)
 		k8s-airflow-local-up \
 		k8s-airflow-port-forward k8s-airflow-logs \
 	k8s-mlops-up k8s-mlops-down \
-	verify-mlflow train-sol train-lipo train-ames train-herg train-cyp3a4 \
+	verify-mlflow train-sol train-lipo train-ames train-herg train-cyp3a4 train-baselines \
 	train-phase1 predict-sol dvc-remote dvc-push bundle-models \
 	verify-model-bundle register-model-bundle evaluate agent-search
 
@@ -308,6 +308,9 @@ train-herg:
 
 train-cyp3a4:
 	uv run python -m src.models.train_admet_xgboost --config configs/training.yaml --dataset CYP3A4_Veith
+
+train-baselines:
+	uv run python -m src.models.train_baseline
 
 train-phase1: train-sol train-lipo train-ames train-herg train-cyp3a4
 
