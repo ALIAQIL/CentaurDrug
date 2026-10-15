@@ -172,6 +172,7 @@ def test_chat_endpoint_fallback(monkeypatch):
     data = response.json()
     assert data["status"] == "ok"
     assert data["mode"] == "fallback"
+    assert data["trace_id"] is None
     assert "CCO" in data["reply"]
     assert data["suggested_prompts"]
 
@@ -205,3 +206,47 @@ def test_chat_endpoint_uses_llm_when_available(monkeypatch):
     data = response.json()
     assert data["mode"] == "gemini"
     assert data["reply"] == "LLM explanation"
+    assert data["trace_id"] is None
+
+
+def test_feedback_endpoint_is_best_effort(monkeypatch):
+    calls = []
+
+    def fake_submit_feedback(trace_id, **kwargs):
+        calls.append((trace_id, kwargs))
+        return True
+
+    monkeypatch.setattr(main, "submit_feedback", fake_submit_feedback)
+
+    response = client.post(
+        "/feedback",
+        json={
+            "trace_id": "trace-123",
+            "key": "chat_usefulness",
+            "score": 1,
+            "comment": "Clear explanation.",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok", "submitted": True}
+    assert calls == [
+        (
+            "trace-123",
+            {
+                "key": "chat_usefulness",
+                "score": 1.0,
+                "comment": "Clear explanation.",
+                "extra": {"candidate_smiles": None},
+            },
+        )
+    ]
+
+
+def test_feedback_endpoint_rejects_invalid_score():
+    response = client.post(
+        "/feedback",
+        json={"trace_id": "trace-123", "score": 2},
+    )
+
+    assert response.status_code == 422

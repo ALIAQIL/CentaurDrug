@@ -206,6 +206,27 @@ button.is-loading::before {
   letter-spacing: 0;
 }
 
+.panel-actions,
+.trace-feedback,
+.message-feedback {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.trace-feedback,
+.message-feedback {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.trace-feedback button,
+.message-feedback button {
+  min-height: 24px;
+  padding: 0 7px;
+  font-size: 11px;
+}
+
 .badge,
 .status-pill {
   display: inline-flex;
@@ -503,6 +524,10 @@ tr.candidate-row.selected {
   margin: 0;
   line-height: 1.45;
   white-space: pre-wrap;
+}
+
+.message-feedback {
+  margin-top: 9px;
 }
 
 .prompt-chips {

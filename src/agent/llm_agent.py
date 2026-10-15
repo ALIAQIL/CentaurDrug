@@ -11,6 +11,7 @@ from src.agent.knowledge_base import (
     get_available_transformations,
     summarize_transformations_for_prompt,
 )
+from src.prompts import build_strategy_prompt
 
 
 load_dotenv()
@@ -164,31 +165,8 @@ class GeminiStrategyAgent:
         score_vector: Dict[str, Any],
     ) -> str:
         transformations = summarize_transformations_for_prompt()
-
-        return f"""
-You are the strategy module of CentaurDrug, an AI medicinal chemistry copilot.
-
-You do not directly generate final molecules.
-Your job is to choose which allowed RDKit transformations should be tried next.
-
-You must preserve the core scaffold as much as possible.
-You must consider ADMET tradeoffs.
-You must not over-trust out-of-domain predictions.
-
-Parent molecule evaluation summary:
-{evaluation_summary}
-
-Parent score vector:
-{score_vector}
-
-Available transformations:
-{transformations}
-
-Return a structured strategy selecting only transformations from the available list.
-
-Rules:
-- If poor solubility or high lipophilicity is present, prefer polarity-increasing transformations.
-- If hERG risk is present, avoid transformations that strongly increase lipophilicity.
-- If predictions are out of applicability domain, be cautious.
-- Do not choose transformations that are not in the available list.
-"""
+        return build_strategy_prompt(
+            evaluation_summary=evaluation_summary,
+            score_vector=score_vector,
+            transformations=transformations,
+        )

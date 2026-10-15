@@ -1,0 +1,54 @@
+[
+  {
+    "dataset": "centaurdrug-optimization-v1",
+    "inputs": {
+      "smiles": "CC(=O)Oc1ccccc1C(=O)O",
+      "max_depth": 1,
+      "beam_width": 3,
+      "max_candidates_per_node": 8,
+      "constraints": {}
+    },
+    "metadata": {"risk_profile": "baseline"}
+  },
+  {
+    "dataset": "centaurdrug-optimization-v1",
+    "inputs": {
+      "smiles": "CCOc1ccc(cc1)C(=O)NCC",
+      "max_depth": 1,
+      "beam_width": 2,
+      "max_candidates_per_node": 6,
+      "constraints": {"max_mw": 500}
+    },
+    "metadata": {"risk_profile": "lipophilicity-and-solubility"}
+  },
+  {
+    "dataset": "centaurdrug-chat-v1",
+    "inputs": {
+      "smiles": "CCO",
+      "prompt": "What are the main ADMET risks?",
+      "context": {
+        "type": "evaluation",
+        "main_risks": ["out_of_applicability_domain"]
+      }
+    },
+    "metadata": {"intent": "risk-explanation"}
+  },
+  {
+    "dataset": "centaurdrug-chat-v1",
+    "inputs": {
+      "smiles": "CC(=O)Oc1ccccc1C(=O)O",
+      "prompt": "Explain this candidate compared with the parent.",
+      "context": {
+        "type": "candidate",
+        "candidate": {
+          "smiles": "CC(=O)Oc1ccccc1C(=O)O",
+          "transformation": "aromatic_H_to_OH",
+          "delta_vs_parent": 0.12,
+          "improvements": ["solubility improved"],
+          "tradeoffs": ["prediction remains computational"]
+        }
+      }
+    },
+    "metadata": {"intent": "candidate-comparison"}
+  }
+]

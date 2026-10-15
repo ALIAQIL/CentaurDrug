@@ -322,6 +322,9 @@ jobs:
           MLFLOW_FLASK_SERVER_SECRET_KEY: ${{ secrets.MLFLOW_FLASK_SERVER_SECRET_KEY }}
           MLFLOW_ALLOWED_HOSTS: ${{ secrets.MLFLOW_ALLOWED_HOSTS }}
           MLFLOW_CORS_ALLOWED_ORIGINS: ${{ secrets.MLFLOW_CORS_ALLOWED_ORIGINS }}
+          LANGSMITH_API_KEY: ${{ secrets.LANGSMITH_API_KEY }}
+          LANGSMITH_WORKSPACE_ID: ${{ secrets.LANGSMITH_WORKSPACE_ID }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
           set -euo pipefail
           for secret_name in \
@@ -372,8 +375,15 @@ jobs:
             --from-literal=MLFLOW_TRACKING_PASSWORD="$MLFLOW_ADMIN_PASSWORD" \
             --dry-run=client -o yaml | kubectl apply -f -
 
+          kubectl -n centaurdrug create secret generic centaurdrug-api-secret \
+            --from-literal=LANGSMITH_API_KEY="$LANGSMITH_API_KEY" \
+            --from-literal=LANGSMITH_WORKSPACE_ID="$LANGSMITH_WORKSPACE_ID" \
+            --from-literal=GEMINI_API_KEY="$GEMINI_API_KEY" \
+            --dry-run=client -o yaml | kubectl apply -f -
+
           kubectl apply -f k8s/api-deployment.yaml
           kubectl -n centaurdrug set image deployment/centaurdrug-api api="$API_IMAGE"
+          kubectl -n centaurdrug set env deployment/centaurdrug-api CENTAURDRUG_APP_VERSION="$GITHUB_SHA"
 
           kubectl -n centaurdrug delete job centaurdrug-mlflow-migrate \
             --ignore-not-found --wait=true

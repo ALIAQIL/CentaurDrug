@@ -9,6 +9,7 @@ dependencies = [
     "joblib>=1.5.3",
     "langchain-google-genai>=4.2.0",
     "langgraph>=1.0.5",
+    "langsmith>=0.8.16",
     "numpy>=1.26.4",
     "pydantic>=2.12.5",
     "python-dotenv>=1.2.1",

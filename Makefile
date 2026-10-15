@@ -43,6 +43,8 @@ K8S = $(KUBECTL) -n $(K8S_NAMESPACE)
 
 .PHONY: \
 		test sync sync-all app run api \
+			langsmith-datasets \
+			langsmith-evaluate-chat \
 			mlflow-local mlflow-local-verify mlflow-compose-up mlflow-compose-down \
 			mlflow-compose-logs airflow-local mlflow-image \
 			k8s-namespace k8s-mlflow-secret k8s-mlflow-local-secret \
@@ -71,6 +73,12 @@ app:
 run: app
 
 api: app
+
+langsmith-datasets:
+	LANGSMITH_TRACING=false uv run python -m evals.seed_langsmith_datasets
+
+langsmith-evaluate-chat:
+	LANGSMITH_TRACING=false GEMINI_REQUEST_TIMEOUT=30 LANGSMITH_JUDGE_TIMEOUT=30 uv run python -m evals.run_langsmith_evaluations
 
 mlflow-local:
 	@mkdir -p "$(MLFLOW_ARTIFACT_ROOT)"

@@ -13,7 +13,17 @@ from fastapi.responses import FileResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
 
+from src.observability import (
+    build_trace_metadata,
+    request_trace,
+    submit_feedback,
+)
 from src.agent.graph import run_graph
+from src.prompts import (
+    CHAT_PROMPT_VERSION,
+    STRATEGY_PROMPT_VERSION,
+    build_chat_prompt as render_chat_prompt,
+)
 from src.tools.evaluator import (
     ADMETPanelEvaluator,
     ModelArtifactError,
@@ -110,6 +120,16 @@ class ChatRequest(BaseModel):
 
         stripped = value.strip()
         return stripped or None
+
+
+class FeedbackRequest(BaseModel):
+    trace_id: str = Field(..., min_length=1, max_length=100)
+    key: Literal["user_feedback", "chat_usefulness", "optimization_usefulness"] = (
+        "user_feedback"
+    )
+    score: float = Field(..., ge=0, le=1)
+    comment: str | None = Field(default=None, max_length=2000)
+    candidate_smiles: str | None = Field(default=None, max_length=1000)
 
 
 @lru_cache(maxsize=4)
@@ -294,58 +314,123 @@ def evaluate(request: EvaluateRequest) -> Dict[str, Any]:
 
 @app.post("/optimize")
 def optimize(request: OptimizeRequest) -> Dict[str, Any]:
-    try:
-        model_root = resolve_model_root(request.model_root)
-        return run_graph(
-            smiles=request.smiles,
-            model_root=model_root,
-            max_depth=request.max_depth,
-            beam_width=request.beam_width,
-            max_candidates_per_node=request.max_candidates_per_node,
-            include_full_tree=request.include_full_tree,
-            constraints=request.constraints.model_dump(exclude_none=True),
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    except ModelArtifactError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-    except Exception as exc:
-        LOGGER.exception("Optimization failed for submitted molecule.")
-        raise HTTPException(
-            status_code=500,
-            detail="Optimization failed. Check the molecule and optimization settings, then try again.",
-        ) from exc
+    constraints = request.constraints.model_dump(exclude_none=True)
+    trace_metadata = build_trace_metadata(
+        "optimize",
+        prompt_version=STRATEGY_PROMPT_VERSION,
+        gemini_model="gemini-2.5-flash",
+        model_root=request.model_root,
+        max_depth=request.max_depth,
+        beam_width=request.beam_width,
+        max_candidates_per_node=request.max_candidates_per_node,
+        constraints=constraints,
+    )
+    trace_inputs = {
+        "smiles": request.smiles,
+        "model_root": request.model_root,
+        "max_depth": request.max_depth,
+        "beam_width": request.beam_width,
+        "max_candidates_per_node": request.max_candidates_per_node,
+        "constraints": constraints,
+    }
+
+    with request_trace(
+        "centaurdrug.optimize",
+        inputs=trace_inputs,
+        metadata=trace_metadata,
+        tags=[
+            "endpoint:optimize",
+            f"environment:{trace_metadata['environment']}",
+        ],
+    ) as trace_handle:
+        try:
+            model_root = resolve_model_root(request.model_root)
+            result = run_graph(
+                smiles=request.smiles,
+                model_root=model_root,
+                max_depth=request.max_depth,
+                beam_width=request.beam_width,
+                max_candidates_per_node=request.max_candidates_per_node,
+                include_full_tree=request.include_full_tree,
+                constraints=constraints,
+            )
+            result = dict(result)
+            result["trace_id"] = trace_handle.trace_id
+            return result
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except ModelArtifactError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        except Exception as exc:
+            trace_handle.add_metadata({"error": str(exc)[:500]})
+            trace_handle.add_tags(["status:error"])
+            LOGGER.exception("Optimization failed for submitted molecule.")
+            raise HTTPException(
+                status_code=500,
+                detail="Optimization failed. Check the molecule and optimization settings, then try again.",
+            ) from exc
 
 
 @app.post("/chat")
 def chat(request: ChatRequest) -> Dict[str, Any]:
     prompt = build_chat_prompt(request)
-    llm = get_chat_llm()
+    compact_context = compact_chat_context(request.context)
+    trace_metadata = build_trace_metadata(
+        "chat",
+        prompt_version=CHAT_PROMPT_VERSION,
+        gemini_model="gemini-2.5-flash",
+        context_type=request.context.get("type"),
+    )
 
-    if llm is None:
-        return {
-            "status": "ok",
-            "mode": "fallback",
-            "reply": build_fallback_chat_reply(request),
-            "suggested_prompts": build_suggested_prompts(request.context),
-        }
+    with request_trace(
+        "centaurdrug.chat",
+        inputs={
+            "smiles": request.smiles,
+            "prompt": request.prompt,
+            "context": compact_context,
+            "messages": [message.model_dump() for message in request.messages],
+        },
+        metadata=trace_metadata,
+        tags=[
+            "endpoint:chat",
+            f"environment:{trace_metadata['environment']}",
+        ],
+    ) as trace_handle:
+        llm = get_chat_llm()
 
-    try:
-        result = llm.invoke(prompt)
-        return {
-            "status": "ok",
-            "mode": "gemini",
-            "reply": extract_llm_text(result),
-            "suggested_prompts": build_suggested_prompts(request.context),
-        }
-    except Exception:
-        LOGGER.exception("Gemini chat call failed; using deterministic fallback.")
-        return {
-            "status": "ok",
-            "mode": "fallback",
-            "reply": build_fallback_chat_reply(request),
-            "suggested_prompts": build_suggested_prompts(request.context),
-        }
+        if llm is None:
+            trace_handle.add_metadata({"mode": "fallback"})
+            trace_handle.add_tags(["mode:fallback"])
+            return {
+                "status": "ok",
+                "mode": "fallback",
+                "reply": build_fallback_chat_reply(request),
+                "suggested_prompts": build_suggested_prompts(request.context),
+                "trace_id": trace_handle.trace_id,
+            }
+
+        try:
+            result = llm.invoke(prompt)
+            trace_handle.add_metadata({"mode": "gemini"})
+            trace_handle.add_tags(["mode:gemini"])
+            return {
+                "status": "ok",
+                "mode": "gemini",
+                "reply": extract_llm_text(result),
+                "suggested_prompts": build_suggested_prompts(request.context),
+                "trace_id": trace_handle.trace_id,
+            }
+        except Exception as exc:
+            trace_handle.add_metadata({"mode": "fallback", "error": str(exc)[:500]})
+            trace_handle.add_tags(["mode:fallback", "status:error"])
+            LOGGER.exception("Gemini chat call failed; using deterministic fallback.")
+            return {
+                "status": "ok",
+                "mode": "fallback",
+                "reply": build_fallback_chat_reply(request),
+                "suggested_prompts": build_suggested_prompts(request.context),
+                "trace_id": trace_handle.trace_id,
+            }
 
 
 def build_chat_prompt(request: ChatRequest) -> str:
@@ -355,31 +440,29 @@ def build_chat_prompt(request: ChatRequest) -> str:
     )
     context = compact_chat_context(request.context)
 
-    return f"""
-You are the CentaurDrug medicinal chemistry copilot.
+    return render_chat_prompt(
+        smiles=request.smiles or "not provided",
+        context=context,
+        history=history,
+        prompt=request.prompt,
+    )
 
-Your job is to explain the currently selected molecule or candidate in a careful,
-scientific, and demo-friendly way.
 
-Rules:
-- Do not claim that a molecule is clinically safe or effective.
-- Treat ADMET predictions as computational estimates.
-- Mention applicability-domain risk when present.
-- Prefer concise answers with concrete next questions or actions.
-- If the user selected a generated candidate, compare it to the parent.
-
-Current SMILES:
-{request.smiles or "not provided"}
-
-Current context:
-{context}
-
-Recent chat:
-{history or "No previous chat."}
-
-User prompt:
-{request.prompt}
-"""
+@app.post("/feedback")
+def feedback(request: FeedbackRequest) -> Dict[str, Any]:
+    submitted = submit_feedback(
+        request.trace_id,
+        key=request.key,
+        score=request.score,
+        comment=request.comment,
+        extra={
+            "candidate_smiles": request.candidate_smiles,
+        },
+    )
+    return {
+        "status": "ok",
+        "submitted": submitted,
+    }
 
 
 def compact_chat_context(context: Dict[str, Any]) -> Dict[str, Any]:

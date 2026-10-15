@@ -1,0 +1,29 @@
+{
+  "project": "centaurdrug-staging",
+  "sample_rate": 0.1,
+  "evaluators": [
+    {
+      "name": "chat-usefulness-v1",
+      "implementation": "evals.langsmith_llm_judge.chat_llm_judge",
+      "prompt_version": "chat-judge-v1",
+      "trace_filter": "metadata.endpoint = 'chat'",
+      "criteria": [
+        "The response directly answers the user's question.",
+        "The response is concise and scientifically understandable.",
+        "The response distinguishes computational predictions from clinical evidence.",
+        "The response discusses applicability-domain risk when it is present in context."
+      ],
+      "score_range": [0, 1]
+    },
+    {
+      "name": "strategy-quality-v1",
+      "trace_filter": "metadata.endpoint = 'optimize'",
+      "criteria": [
+        "The chosen transformations address the reported ADMET risks.",
+        "The strategy preserves the scaffold where possible.",
+        "The rationale acknowledges relevant tradeoffs and uncertainty."
+      ],
+      "score_range": [0, 1]
+    }
+  ]
+}

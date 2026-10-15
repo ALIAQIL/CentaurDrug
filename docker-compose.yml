@@ -7,6 +7,15 @@ services:
       CENTAURDRUG_MODEL_ROOT: /app/models/admet_xgboost
       CENTAURDRUG_ALLOWED_MODEL_ROOTS: /app/models/admet_xgboost
       CENTAURDRUG_REQUIRE_MODELS_ON_STARTUP: "1"
+      CENTAURDRUG_ENVIRONMENT: ${CENTAURDRUG_ENVIRONMENT:-local}
+      CENTAURDRUG_APP_VERSION: ${CENTAURDRUG_APP_VERSION:-local}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GEMINI_REQUEST_TIMEOUT: ${GEMINI_REQUEST_TIMEOUT:-12}
+      LANGSMITH_TRACING: ${LANGSMITH_TRACING:-false}
+      LANGSMITH_API_KEY: ${LANGSMITH_API_KEY:-}
+      LANGSMITH_ENDPOINT: ${LANGSMITH_ENDPOINT:-https://api.smith.langchain.com}
+      LANGSMITH_PROJECT: ${LANGSMITH_PROJECT:-centaurdrug-local}
+      LANGSMITH_WORKSPACE_ID: ${LANGSMITH_WORKSPACE_ID:-}
     volumes:
       - ${CENTAURDRUG_HOST_MODEL_ROOT:-./models/admet_xgboost}:/app/models/admet_xgboost:ro
     ports:

@@ -36,6 +36,34 @@ spec:
               value: /app/models/admet_xgboost
             - name: CENTAURDRUG_REQUIRE_MODELS_ON_STARTUP
               value: "1"
+            - name: CENTAURDRUG_ENVIRONMENT
+              value: production
+            - name: CENTAURDRUG_APP_VERSION
+              value: kubernetes
+            - name: LANGSMITH_TRACING
+              value: "false"
+            - name: LANGSMITH_PROJECT
+              value: centaurdrug-production
+            - name: LANGSMITH_ENDPOINT
+              value: https://api.smith.langchain.com
+            - name: LANGSMITH_WORKSPACE_ID
+              valueFrom:
+                secretKeyRef:
+                  name: centaurdrug-api-secret
+                  key: LANGSMITH_WORKSPACE_ID
+                  optional: true
+            - name: LANGSMITH_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: centaurdrug-api-secret
+                  key: LANGSMITH_API_KEY
+                  optional: true
+            - name: GEMINI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: centaurdrug-api-secret
+                  key: GEMINI_API_KEY
+                  optional: true
           ports:
             - containerPort: 8000
           readinessProbe:

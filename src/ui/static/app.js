@@ -2,6 +2,7 @@ const state = {
   evaluation: null,
   optimization: null,
   selectedCandidateId: null,
+  optimizationFeedbackSent: false,
   chatMessages: [],
   currentChatContext: null,
   currentChatContextKey: null,
@@ -21,6 +22,7 @@ const els = {
   evaluationSummary: document.getElementById("evaluationSummary"),
   riskList: document.getElementById("riskList"),
   candidateCount: document.getElementById("candidateCount"),
+  optimizationFeedback: document.getElementById("optimizationFeedback"),
   candidateTable: document.getElementById("candidateTable"),
   selectedBadge: document.getElementById("selectedBadge"),
   candidateDetail: document.getElementById("candidateDetail"),
@@ -312,6 +314,8 @@ function reviewLabel(status) {
 
 function renderCandidates(result, preferredNodeId = state.selectedCandidateId) {
   state.optimization = result;
+  state.optimizationFeedbackSent = false;
+  renderOptimizationFeedback(result.trace_id);
   const candidates = result.best_candidate_nodes || [];
   els.candidateCount.textContent = String(candidates.length);
 
@@ -652,8 +656,8 @@ async function handleOptimize() {
   }
 }
 
-function addChatMessage(role, content) {
-  state.chatMessages.push({role, content});
+function addChatMessage(role, content, traceId = null) {
+  state.chatMessages.push({role, content, traceId});
 
   if (state.chatMessages.length > 30) {
     state.chatMessages = state.chatMessages.slice(-30);
@@ -674,14 +678,78 @@ function renderChatMessages() {
   }
 
   els.chatMessages.innerHTML = state.chatMessages
-    .map((message) => `
+    .map((message, index) => `
       <div class="chat-message ${escapeHtml(message.role)}">
         <strong>${escapeHtml(labelForChatRole(message.role))}</strong>
         <p>${escapeHtml(message.content)}</p>
+        ${message.role === "assistant" && message.traceId ? `
+          <div class="message-feedback" data-feedback-index="${index}">
+            <button type="button" data-feedback-score="1">Helpful</button>
+            <button type="button" data-feedback-score="0">Not helpful</button>
+          </div>
+        ` : ""}
       </div>
     `)
     .join("");
   els.chatMessages.scrollTop = els.chatMessages.scrollHeight;
+
+  els.chatMessages.querySelectorAll(".message-feedback button").forEach((button) => {
+    button.addEventListener("click", () => {
+      const index = Number(button.parentElement.dataset.feedbackIndex);
+      const message = state.chatMessages[index];
+      if (!message?.traceId) return;
+      sendFeedback(
+        message.traceId,
+        "chat_usefulness",
+        Number(button.dataset.feedbackScore),
+        button.parentElement,
+      );
+    });
+  });
+}
+
+function renderOptimizationFeedback(traceId) {
+  if (!traceId) {
+    els.optimizationFeedback.hidden = true;
+    els.optimizationFeedback.innerHTML = "";
+    return;
+  }
+
+  els.optimizationFeedback.hidden = false;
+  els.optimizationFeedback.innerHTML = `
+    <span>Useful?</span>
+    <button type="button" data-feedback-score="1">Yes</button>
+    <button type="button" data-feedback-score="0">No</button>
+  `;
+  els.optimizationFeedback.querySelectorAll("button").forEach((button) => {
+    button.addEventListener("click", () => {
+      sendFeedback(
+        traceId,
+        "optimization_usefulness",
+        Number(button.dataset.feedbackScore),
+        els.optimizationFeedback,
+      );
+    });
+  });
+}
+
+async function sendFeedback(traceId, key, score, container) {
+  if (!traceId || container.dataset.submitted === "true") return;
+
+  try {
+    const response = await postJson("/feedback", {
+      trace_id: traceId,
+      key,
+      score,
+    });
+    container.dataset.submitted = "true";
+    container.querySelectorAll("button").forEach((button) => {
+      button.disabled = true;
+    });
+    showToast(response.submitted ? "Feedback recorded." : "Feedback unavailable.");
+  } catch {
+    showToast("Feedback could not be submitted.");
+  }
 }
 
 function labelForChatRole(role) {
@@ -735,7 +803,7 @@ async function sendChatPrompt(prompt, options = {}) {
       },
       messages: chatHistoryForApi(),
     });
-    addChatMessage("assistant", response.reply);
+    addChatMessage("assistant", response.reply, response.trace_id || null);
     renderPromptChips(response.suggested_prompts);
     els.chatMode.textContent = response.mode === "gemini" ? "Gemini" : "Fallback";
     els.chatMode.className = "badge muted";

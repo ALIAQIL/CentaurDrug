@@ -381,6 +381,7 @@ Main endpoints:
 | POST | `/evaluate` | Runs full ADMET panel evaluation. |
 | POST | `/optimize` | Runs the LangGraph optimization agent. |
 | POST | `/chat` | Chat assistant for the current molecule or candidate. |
+| POST | `/feedback` | Best-effort LangSmith feedback submission for a returned trace ID. |
 
 Example rule call:
 
@@ -488,6 +489,72 @@ Important environment variables:
 | `CENTAURDRUG_HOST_MODEL_ROOT` | Host folder mounted into Compose as `/app/models/admet_xgboost`. |
 | `GEMINI_API_KEY` | Optional key for Gemini chat and strategy guidance. |
 | `GEMINI_REQUEST_TIMEOUT` | Optional Gemini request timeout. |
+| `LANGSMITH_TRACING` | Optional LangSmith tracing flag; defaults to `false`. |
+| `LANGSMITH_API_KEY` | Optional LangSmith Cloud API key. Required when tracing is enabled. |
+| `LANGSMITH_ENDPOINT` | LangSmith API endpoint; defaults to the Cloud endpoint. |
+| `LANGSMITH_PROJECT` | LangSmith project name; defaults from the CentaurDrug environment. |
+| `LANGSMITH_WORKSPACE_ID` | LangSmith workspace ID; required for organization-scoped API keys. |
+| `LANGSMITH_JUDGE_MODEL` | Gemini model used by the offline LLM-as-a-judge evaluator. |
+| `LANGSMITH_JUDGE_TIMEOUT` | Timeout in seconds for judge-model calls; defaults to `30`. |
+| `CENTAURDRUG_ENVIRONMENT` | Runtime environment used for trace grouping: `local`, `staging`, or `production`. |
+| `CENTAURDRUG_APP_VERSION` | Application or Git version attached to traces. |
+
+### LangSmith tracing
+
+Local tracing is opt-in. Copy the LangSmith values into `.env`, then start the
+API with Compose:
+
+```bash
+LANGSMITH_TRACING=true \
+LANGSMITH_API_KEY='<your-langsmith-api-key>' \
+LANGSMITH_PROJECT=centaurdrug-local \
+LANGSMITH_WORKSPACE_ID='<your-langsmith-workspace-id>' \
+docker compose up --build api
+```
+
+The `/chat` and `/optimize` responses include a nullable `trace_id`. The UI
+uses it to send optional feedback to the backend without exposing the
+LangSmith API key to the browser. Production Kubernetes manifests keep
+tracing disabled by default; staging can enable it by setting
+`LANGSMITH_TRACING=true` and using a staging project name in the deployment
+configuration.
+
+Curated evaluation cases live in `evals/cases.json`. After configuring a
+LangSmith API key, seed the two versioned datasets with:
+
+```bash
+make langsmith-datasets
+```
+
+If dataset seeding returns `403 Forbidden`, add the workspace ID shown in
+LangSmith Settings to `LANGSMITH_WORKSPACE_ID`. The API key must also have
+permission to create and read datasets. For an EU LangSmith workspace, set
+`LANGSMITH_ENDPOINT=https://eu.api.smith.langchain.com`.
+
+The deterministic evaluator functions in `evals/langsmith_evaluators.py` can
+be registered as code evaluators for structured strategy output,
+optimization constraints, and chat safety. The LLM-as-judge criteria and
+filters are recorded in `evals/judge_specs.json`; attach those evaluators to
+the staging project with its 10% sampling rate. Keep them disabled for
+production until staging cost and quality are reviewed.
+
+Run the reproducible chat LLM-as-a-judge evaluation against the curated
+dataset with:
+
+```bash
+make langsmith-evaluate-chat
+```
+
+This runs the application chat path, asks Gemini to score usefulness,
+scientific caution, clarity, and applicability-domain handling, then uploads
+the per-example scores as a LangSmith experiment. It requires both
+`GEMINI_API_KEY` and the LangSmith variables. Gemini/API failures are recorded
+as evaluator errors; the command never fabricates a score.
+
+For qualified human review, use the LangSmith annotation queue or add human
+feedback to individual traces. Prioritize responses whose judge metadata sets
+`needs_human_review=true`, makes a safety claim, or receives a low user
+feedback score. Human review remains separate from automated LLM judging.
 
 ## Model Delivery
 
