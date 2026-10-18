@@ -24,6 +24,8 @@ spec:
     metadata:
       labels:
         app: centaurdrug-api
+        app.kubernetes.io/name: centaurdrug
+        app.kubernetes.io/component: api
     spec:
       containers:
         - name: api
@@ -93,10 +95,14 @@ kind: Service
 metadata:
   name: centaurdrug-api-service
   namespace: centaurdrug
+  labels:
+    app.kubernetes.io/name: centaurdrug
+    app.kubernetes.io/component: api
 spec:
   selector:
     app: centaurdrug-api
   ports:
-    - port: 8000
+    - name: http
+      port: 8000
       targetPort: 8000
   type: NodePort

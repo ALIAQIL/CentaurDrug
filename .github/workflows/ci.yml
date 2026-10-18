@@ -56,6 +56,33 @@ jobs:
         # Why: executing the DAG module catches broken Airflow imports and task construction before image build.
         run: uv run --group orchestration python dags/centaurdrug_training_pipeline.py
 
+      - name: Validate Kubernetes monitoring manifests
+        # Why: selector mismatches would leave Grafana empty even when every resource applies successfully.
+        run: |
+          uv run python - <<'PY'
+          import os
+          from pathlib import Path
+          import yaml
+
+          documents = []
+          for path in Path("k8s").glob("*.yaml"):
+              documents.extend(doc for doc in yaml.safe_load_all(path.read_text()) if doc)
+
+          rules = next(
+              doc["spec"] for doc in documents
+              if doc.get("kind") == "PrometheusRule"
+              and doc.get("metadata", {}).get("name") == "centaurdrug-api"
+          )
+          output = Path(os.environ["RUNNER_TEMP"]) / "centaurdrug-prometheus-rules.yaml"
+          output.write_text(yaml.safe_dump(rules))
+          print(f"Validated {len(documents)} Kubernetes documents.")
+          PY
+          docker run --rm \
+            -v "${RUNNER_TEMP}:/tmp/centaurdrug:ro" \
+            --entrypoint promtool \
+            quay.io/prometheus/prometheus:v3.5.0 \
+            check rules /tmp/centaurdrug/centaurdrug-prometheus-rules.yaml
+
       - name: Tests
         # Why: pytest verifies the API, model helpers, agent logic, and validation code still behave.
         run: uv run pytest
@@ -136,6 +163,7 @@ jobs:
           done
 
           curl --fail --silent http://127.0.0.1:8000/health
+          curl --fail --silent http://127.0.0.1:8000/metrics | grep -q centaurdrug_http_requests_total
           curl --fail --silent \
             --header "Content-Type: application/json" \
             --data '{"smiles":"CCO"}' \
@@ -325,6 +353,7 @@ jobs:
           LANGSMITH_API_KEY: ${{ secrets.LANGSMITH_API_KEY }}
           LANGSMITH_WORKSPACE_ID: ${{ secrets.LANGSMITH_WORKSPACE_ID }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GRAFANA_ADMIN_PASSWORD: ${{ secrets.GRAFANA_ADMIN_PASSWORD }}
         run: |
           set -euo pipefail
           for secret_name in \
@@ -338,7 +367,8 @@ jobs:
             MLFLOW_ADMIN_PASSWORD \
             MLFLOW_FLASK_SERVER_SECRET_KEY \
             MLFLOW_ALLOWED_HOSTS \
-            MLFLOW_CORS_ALLOWED_ORIGINS; do
+            MLFLOW_CORS_ALLOWED_ORIGINS \
+            GRAFANA_ADMIN_PASSWORD; do
             if [ -z "${!secret_name}" ]; then
               echo "Required GitHub Secret ${secret_name} is not configured."
               exit 1
@@ -346,6 +376,15 @@ jobs:
           done
 
           kubectl apply -f k8s/namespace.yaml
+          for crd in \
+            prometheuses.monitoring.coreos.com \
+            servicemonitors.monitoring.coreos.com \
+            prometheusrules.monitoring.coreos.com; do
+            if ! kubectl get crd "$crd" >/dev/null 2>&1; then
+              echo "Required Prometheus Operator CRD ${crd} is not installed in the cluster."
+              exit 1
+            fi
+          done
           secret_args=(
             --from-literal=AIRFLOW__DATABASE__SQL_ALCHEMY_CONN="$AIRFLOW_DATABASE_URI"
             --from-literal=AIRFLOW__CORE__FERNET_KEY="$AIRFLOW_FERNET_KEY"
@@ -381,9 +420,15 @@ jobs:
             --from-literal=GEMINI_API_KEY="$GEMINI_API_KEY" \
             --dry-run=client -o yaml | kubectl apply -f -
 
+          kubectl -n centaurdrug create secret generic centaurdrug-grafana-secret \
+            --from-literal=GF_SECURITY_ADMIN_PASSWORD="$GRAFANA_ADMIN_PASSWORD" \
+            --dry-run=client -o yaml | kubectl apply -f -
+
           kubectl apply -f k8s/api-deployment.yaml
           kubectl -n centaurdrug set image deployment/centaurdrug-api api="$API_IMAGE"
           kubectl -n centaurdrug set env deployment/centaurdrug-api CENTAURDRUG_APP_VERSION="$GITHUB_SHA"
+          kubectl apply -f k8s/monitoring.yaml
+          kubectl apply -f k8s/grafana.yaml
 
           kubectl -n centaurdrug delete job centaurdrug-mlflow-migrate \
             --ignore-not-found --wait=true
@@ -415,6 +460,9 @@ jobs:
         if: ${{ steps.deploy_config.outputs.has_kube_config == 'true' }}
         run: |
           kubectl -n centaurdrug rollout status deployment/centaurdrug-api --timeout=180s
+          kubectl -n centaurdrug rollout status deployment/centaurdrug-grafana --timeout=180s
+          kubectl -n centaurdrug wait --for=condition=ready pod \
+            -l prometheus=centaurdrug-prometheus --timeout=300s
           kubectl -n centaurdrug rollout status deployment/centaurdrug-mlflow --timeout=180s
           kubectl -n centaurdrug rollout status deployment/centaurdrug-airflow-api-server --timeout=300s
           kubectl -n centaurdrug rollout status deployment/centaurdrug-airflow-scheduler --timeout=300s

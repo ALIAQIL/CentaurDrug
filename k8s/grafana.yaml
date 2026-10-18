@@ -1,0 +1,290 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: centaurdrug-grafana
+  namespace: centaurdrug
+  labels:
+    app.kubernetes.io/name: centaurdrug
+    app.kubernetes.io/component: grafana
+automountServiceAccountToken: false
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: centaurdrug-grafana-pvc
+  namespace: centaurdrug
+  labels:
+    app.kubernetes.io/name: centaurdrug
+    app.kubernetes.io/component: grafana
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 2Gi
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: centaurdrug-grafana-datasource
+  namespace: centaurdrug
+  labels:
+    app.kubernetes.io/name: centaurdrug
+    app.kubernetes.io/component: grafana
+data:
+  datasource.yaml: |
+    apiVersion: 1
+    datasources:
+      - name: CentaurDrug Prometheus
+        uid: centaurdrug-prometheus
+        type: prometheus
+        access: proxy
+        url: http://centaurdrug-prometheus-operated:9090
+        isDefault: true
+        editable: false
+        jsonData:
+          timeInterval: 15s
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: centaurdrug-grafana-dashboard-provider
+  namespace: centaurdrug
+  labels:
+    app.kubernetes.io/name: centaurdrug
+    app.kubernetes.io/component: grafana
+data:
+  provider.yaml: |
+    apiVersion: 1
+    providers:
+      - name: CentaurDrug
+        orgId: 1
+        folder: CentaurDrug
+        type: file
+        disableDeletion: true
+        editable: false
+        options:
+          path: /var/lib/grafana/dashboards
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: centaurdrug-grafana-dashboard
+  namespace: centaurdrug
+  labels:
+    app.kubernetes.io/name: centaurdrug
+    app.kubernetes.io/component: grafana
+data:
+  centaurdrug-api.json: |
+    {
+      "annotations": {"list": []},
+      "editable": false,
+      "graphTooltip": 1,
+      "panels": [
+        {
+          "datasource": {"type": "prometheus", "uid": "centaurdrug-prometheus"},
+          "fieldConfig": {"defaults": {"unit": "reqps"}, "overrides": []},
+          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+          "id": 1,
+          "title": "Request rate by route",
+          "type": "timeseries",
+          "targets": [{"expr": "sum(rate(centaurdrug_http_requests_total[5m])) by (route)", "legendFormat": "{{route}}", "refId": "A"}]
+        },
+        {
+          "datasource": {"type": "prometheus", "uid": "centaurdrug-prometheus"},
+          "fieldConfig": {"defaults": {"unit": "percent"}, "overrides": []},
+          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
+          "id": 2,
+          "title": "5xx error rate",
+          "type": "timeseries",
+          "targets": [{"expr": "100 * sum(rate(centaurdrug_http_requests_total{status=~\"5..\"}[5m])) / clamp_min(sum(rate(centaurdrug_http_requests_total[5m])), 1)", "legendFormat": "5xx %", "refId": "A"}]
+        },
+        {
+          "datasource": {"type": "prometheus", "uid": "centaurdrug-prometheus"},
+          "fieldConfig": {"defaults": {"unit": "s"}, "overrides": []},
+          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8},
+          "id": 3,
+          "title": "p95 latency by route",
+          "type": "timeseries",
+          "targets": [{"expr": "histogram_quantile(0.95, sum(rate(centaurdrug_http_request_duration_seconds_bucket[5m])) by (le, route))", "legendFormat": "{{route}}", "refId": "A"}]
+        },
+        {
+          "datasource": {"type": "prometheus", "uid": "centaurdrug-prometheus"},
+          "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []},
+          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8},
+          "id": 4,
+          "title": "API readiness",
+          "type": "timeseries",
+          "targets": [{"expr": "centaurdrug_readiness", "legendFormat": "ready", "refId": "A"}, {"expr": "up{service=\"centaurdrug-api-service\"}", "legendFormat": "scrape target", "refId": "B"}]
+        },
+        {
+          "datasource": {"type": "prometheus", "uid": "centaurdrug-prometheus"},
+          "fieldConfig": {"defaults": {"unit": "reqps"}, "overrides": []},
+          "gridPos": {"h": 8, "w": 8, "x": 0, "y": 16},
+          "id": 5,
+          "title": "Chat fallback rate",
+          "type": "timeseries",
+          "targets": [{"expr": "sum(rate(centaurdrug_chat_requests_total{mode=\"fallback\"}[5m]))", "legendFormat": "fallback", "refId": "A"}]
+        },
+        {
+          "datasource": {"type": "prometheus", "uid": "centaurdrug-prometheus"},
+          "fieldConfig": {"defaults": {"unit": "reqps"}, "overrides": []},
+          "gridPos": {"h": 8, "w": 8, "x": 8, "y": 16},
+          "id": 6,
+          "title": "Optimization rate",
+          "type": "timeseries",
+          "targets": [{"expr": "sum(rate(centaurdrug_optimization_requests_total[5m]))", "legendFormat": "optimization", "refId": "A"}]
+        },
+        {
+          "datasource": {"type": "prometheus", "uid": "centaurdrug-prometheus"},
+          "fieldConfig": {"defaults": {"unit": "reqps"}, "overrides": []},
+          "gridPos": {"h": 8, "w": 8, "x": 16, "y": 16},
+          "id": 7,
+          "title": "Evaluation rate",
+          "type": "timeseries",
+          "targets": [{"expr": "sum(rate(centaurdrug_evaluation_requests_total[5m]))", "legendFormat": "evaluation", "refId": "A"}]
+        }
+      ],
+      "refresh": "15s",
+      "schemaVersion": 39,
+      "style": "dark",
+      "tags": ["centaurdrug", "api", "prometheus"],
+      "templating": {"list": []},
+      "time": {"from": "now-6h", "to": "now"},
+      "timepicker": {},
+      "title": "CentaurDrug API",
+      "uid": "centaurdrug-api",
+      "version": 1
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: centaurdrug-grafana
+  namespace: centaurdrug
+  labels:
+    app.kubernetes.io/name: centaurdrug
+    app.kubernetes.io/component: grafana
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: centaurdrug
+      app.kubernetes.io/component: grafana
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: centaurdrug
+        app.kubernetes.io/component: grafana
+    spec:
+      serviceAccountName: centaurdrug-grafana
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 472
+        runAsGroup: 472
+        fsGroup: 472
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: grafana
+          image: grafana/grafana:12.1.1
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: GF_SECURITY_ADMIN_USER
+              value: admin
+            - name: GF_SECURITY_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: centaurdrug-grafana-secret
+                  key: GF_SECURITY_ADMIN_PASSWORD
+            - name: GF_USERS_ALLOW_SIGN_UP
+              value: "false"
+            - name: GF_PATHS_PROVISIONING
+              value: /etc/grafana/provisioning
+          ports:
+            - name: http
+              containerPort: 3000
+          startupProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 30
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 6
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            periodSeconds: 20
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: grafana-data
+              mountPath: /var/lib/grafana
+            - name: grafana-datasource
+              mountPath: /etc/grafana/provisioning/datasources
+              readOnly: true
+            - name: grafana-dashboard-provider
+              mountPath: /etc/grafana/provisioning/dashboards
+              readOnly: true
+            - name: grafana-dashboard
+              mountPath: /var/lib/grafana/dashboards
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: grafana-data
+          persistentVolumeClaim:
+            claimName: centaurdrug-grafana-pvc
+        - name: grafana-datasource
+          configMap:
+            name: centaurdrug-grafana-datasource
+        - name: grafana-dashboard-provider
+          configMap:
+            name: centaurdrug-grafana-dashboard-provider
+        - name: grafana-dashboard
+          configMap:
+            name: centaurdrug-grafana-dashboard
+        - name: tmp
+          emptyDir:
+            medium: Memory
+            sizeLimit: 64Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: centaurdrug-grafana-service
+  namespace: centaurdrug
+  labels:
+    app.kubernetes.io/name: centaurdrug
+    app.kubernetes.io/component: grafana
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: centaurdrug
+    app.kubernetes.io/component: grafana
+  ports:
+    - name: http
+      port: 3000
+      targetPort: http

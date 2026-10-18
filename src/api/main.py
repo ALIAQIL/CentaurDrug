@@ -9,9 +9,10 @@ from typing import Any, Dict, List, Literal
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, PlainTextResponse
+from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
+from prometheus_client import CONTENT_TYPE_LATEST, Counter, Gauge, Histogram, generate_latest
 
 from src.observability import (
     build_trace_metadata,
@@ -40,11 +41,51 @@ DEFAULT_MODEL_ROOT = os.getenv(
 STATIC_DIR = Path(__file__).resolve().parents[1] / "ui" / "static"
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 LOGGER = logging.getLogger(__name__)
-REQUEST_METRICS = {
-    "requests_total": 0,
-    "errors_total": 0,
-    "latency_seconds_total": 0.0,
-}
+
+HTTP_REQUESTS = Counter(
+    "centaurdrug_http_requests_total",
+    "Total HTTP requests handled by the API.",
+    ("method", "route", "status"),
+)
+HTTP_ERRORS = Counter(
+    "centaurdrug_http_errors_total",
+    "Total HTTP requests that returned a server error.",
+    ("method", "route", "status"),
+)
+HTTP_DURATION = Histogram(
+    "centaurdrug_http_request_duration_seconds",
+    "HTTP request duration in seconds.",
+    ("method", "route"),
+    buckets=(0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10, 30),
+)
+CHAT_REQUESTS = Counter(
+    "centaurdrug_chat_requests_total",
+    "Chat requests by response mode and outcome.",
+    ("mode", "outcome"),
+)
+OPTIMIZATION_REQUESTS = Counter(
+    "centaurdrug_optimization_requests_total",
+    "Optimization requests by outcome.",
+    ("outcome",),
+)
+EVALUATION_REQUESTS = Counter(
+    "centaurdrug_evaluation_requests_total",
+    "ADMET evaluation requests by outcome.",
+    ("outcome",),
+)
+READINESS = Gauge(
+    "centaurdrug_readiness",
+    "Whether the API model artifacts are ready to serve requests.",
+)
+BUILD_INFO = Gauge(
+    "centaurdrug_build_info",
+    "Build information for the CentaurDrug API.",
+    ("version", "environment"),
+)
+BUILD_INFO.labels(
+    version=os.getenv("CENTAURDRUG_APP_VERSION", "unknown"),
+    environment=os.getenv("CENTAURDRUG_ENVIRONMENT", "local"),
+).set(1)
 
 app = FastAPI(
     title="CentaurDrug API",
@@ -179,16 +220,22 @@ async def log_requests(request: Request, call_next):
     try:
         response = await call_next(request)
     except Exception:
-        REQUEST_METRICS["errors_total"] += 1
+        duration = time.perf_counter() - start
+        route = metric_route(request)
+        HTTP_REQUESTS.labels(request.method, route, "500").inc()
+        HTTP_ERRORS.labels(request.method, route, "500").inc()
+        HTTP_DURATION.labels(request.method, route).observe(duration)
         LOGGER.exception("Unhandled request error: %s %s", request.method, request.url.path)
         raise
 
     duration = time.perf_counter() - start
-    REQUEST_METRICS["requests_total"] += 1
-    REQUEST_METRICS["latency_seconds_total"] += duration
+    route = metric_route(request)
+    status = str(response.status_code)
+    HTTP_REQUESTS.labels(request.method, route, status).inc()
+    HTTP_DURATION.labels(request.method, route).observe(duration)
 
     if response.status_code >= 500:
-        REQUEST_METRICS["errors_total"] += 1
+        HTTP_ERRORS.labels(request.method, route, status).inc()
 
     response.headers["X-Process-Time"] = f"{duration:.4f}"
     LOGGER.info(
@@ -199,6 +246,16 @@ async def log_requests(request: Request, call_next):
         duration,
     )
     return response
+
+
+def metric_route(request: Request) -> str:
+    """Return a bounded route label without exposing request data in metrics."""
+    route = request.scope.get("route")
+    route_path = getattr(route, "path", None)
+    if isinstance(route_path, str) and route_path:
+        return route_path
+
+    return "unmatched"
 
 
 def allowed_model_roots() -> tuple[Path, ...]:
@@ -247,13 +304,16 @@ def ready() -> Dict[str, Any]:
     try:
         model_root = resolve_model_root(DEFAULT_MODEL_ROOT)
     except ValueError as exc:
+        READINESS.set(0)
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
     readiness = validate_model_artifacts(model_root)
 
     if readiness["status"] != "ok":
+        READINESS.set(0)
         raise HTTPException(status_code=503, detail=readiness)
 
+    READINESS.set(1)
     return {
         "status": "ok",
         "service": "centaurdrug-api",
@@ -270,23 +330,9 @@ def version() -> Dict[str, Any]:
     }
 
 
-@app.get("/metrics", response_class=PlainTextResponse)
-def metrics() -> str:
-    return "\n".join(
-        [
-            "# HELP centaurdrug_requests_total Total HTTP requests.",
-            "# TYPE centaurdrug_requests_total counter",
-            f"centaurdrug_requests_total {REQUEST_METRICS['requests_total']}",
-            "# HELP centaurdrug_errors_total Total server-side HTTP errors.",
-            "# TYPE centaurdrug_errors_total counter",
-            f"centaurdrug_errors_total {REQUEST_METRICS['errors_total']}",
-            "# HELP centaurdrug_latency_seconds_total Total HTTP request latency.",
-            "# TYPE centaurdrug_latency_seconds_total counter",
-            "centaurdrug_latency_seconds_total "
-            f"{REQUEST_METRICS['latency_seconds_total']:.6f}",
-            "",
-        ]
-    )
+@app.get("/metrics", include_in_schema=False)
+def metrics() -> Response:
+    return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 
 @app.post("/rules")
@@ -299,12 +345,17 @@ def evaluate(request: EvaluateRequest) -> Dict[str, Any]:
     try:
         model_root = resolve_model_root(request.model_root)
         evaluator = get_evaluator(model_root)
-        return evaluator.evaluate_molecule(request.smiles)
+        result = evaluator.evaluate_molecule(request.smiles)
+        EVALUATION_REQUESTS.labels("ok").inc()
+        return result
     except ValueError as exc:
+        EVALUATION_REQUESTS.labels("client_error").inc()
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except ModelArtifactError as exc:
+        EVALUATION_REQUESTS.labels("dependency_error").inc()
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except Exception as exc:
+        EVALUATION_REQUESTS.labels("error").inc()
         LOGGER.exception("Evaluation failed for submitted molecule.")
         raise HTTPException(
             status_code=500,
@@ -356,12 +407,16 @@ def optimize(request: OptimizeRequest) -> Dict[str, Any]:
             )
             result = dict(result)
             result["trace_id"] = trace_handle.trace_id
+            OPTIMIZATION_REQUESTS.labels("ok").inc()
             return result
         except ValueError as exc:
+            OPTIMIZATION_REQUESTS.labels("client_error").inc()
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         except ModelArtifactError as exc:
+            OPTIMIZATION_REQUESTS.labels("dependency_error").inc()
             raise HTTPException(status_code=503, detail=str(exc)) from exc
         except Exception as exc:
+            OPTIMIZATION_REQUESTS.labels("error").inc()
             trace_handle.add_metadata({"error": str(exc)[:500]})
             trace_handle.add_tags(["status:error"])
             LOGGER.exception("Optimization failed for submitted molecule.")
@@ -401,6 +456,7 @@ def chat(request: ChatRequest) -> Dict[str, Any]:
         if llm is None:
             trace_handle.add_metadata({"mode": "fallback"})
             trace_handle.add_tags(["mode:fallback"])
+            CHAT_REQUESTS.labels("fallback", "ok").inc()
             return {
                 "status": "ok",
                 "mode": "fallback",
@@ -413,6 +469,7 @@ def chat(request: ChatRequest) -> Dict[str, Any]:
             result = llm.invoke(prompt)
             trace_handle.add_metadata({"mode": "gemini"})
             trace_handle.add_tags(["mode:gemini"])
+            CHAT_REQUESTS.labels("gemini", "ok").inc()
             return {
                 "status": "ok",
                 "mode": "gemini",
@@ -421,6 +478,7 @@ def chat(request: ChatRequest) -> Dict[str, Any]:
                 "trace_id": trace_handle.trace_id,
             }
         except Exception as exc:
+            CHAT_REQUESTS.labels("fallback", "error").inc()
             trace_handle.add_metadata({"mode": "fallback", "error": str(exc)[:500]})
             trace_handle.add_tags(["mode:fallback", "status:error"])
             LOGGER.exception("Gemini chat call failed; using deterministic fallback.")

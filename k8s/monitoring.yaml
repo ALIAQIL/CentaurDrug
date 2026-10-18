@@ -1,0 +1,177 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: centaurdrug-prometheus
+  namespace: centaurdrug
+  labels:
+    app.kubernetes.io/name: centaurdrug
+    app.kubernetes.io/component: prometheus
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: centaurdrug-prometheus
+  namespace: centaurdrug
+  labels:
+    app.kubernetes.io/name: centaurdrug
+    app.kubernetes.io/component: prometheus
+rules:
+  - apiGroups: [""]
+    resources:
+      - endpoints
+      - pods
+      - services
+    verbs: [get, list, watch]
+  - apiGroups: [discovery.k8s.io]
+    resources:
+      - endpointslices
+    verbs: [get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: centaurdrug-prometheus
+  namespace: centaurdrug
+  labels:
+    app.kubernetes.io/name: centaurdrug
+    app.kubernetes.io/component: prometheus
+subjects:
+  - kind: ServiceAccount
+    name: centaurdrug-prometheus
+    namespace: centaurdrug
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: centaurdrug-prometheus
+---
+apiVersion: monitoring.coreos.com/v1
+kind: Prometheus
+metadata:
+  name: centaurdrug-prometheus
+  namespace: centaurdrug
+  labels:
+    app.kubernetes.io/name: centaurdrug
+    app.kubernetes.io/component: prometheus
+spec:
+  image: quay.io/prometheus/prometheus:v3.13.3
+  replicas: 1
+  retention: 15d
+  serviceAccountName: centaurdrug-prometheus
+  enableAdminAPI: false
+  serviceMonitorSelector:
+    matchLabels:
+      monitoring: centaurdrug
+  serviceMonitorNamespaceSelector:
+    matchLabels:
+      app.kubernetes.io/name: centaurdrug
+  ruleSelector:
+    matchLabels:
+      monitoring: centaurdrug
+  ruleNamespaceSelector:
+    matchLabels:
+      app.kubernetes.io/name: centaurdrug
+  resources:
+    requests:
+      cpu: 200m
+      memory: 512Mi
+    limits:
+      cpu: "1"
+      memory: 2Gi
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 65534
+    runAsGroup: 65534
+    fsGroup: 65534
+    seccompProfile:
+      type: RuntimeDefault
+  storage:
+    volumeClaimTemplate:
+      metadata:
+        labels:
+          app.kubernetes.io/name: centaurdrug
+          app.kubernetes.io/component: prometheus
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: 10Gi
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: centaurdrug-api
+  namespace: centaurdrug
+  labels:
+    app.kubernetes.io/name: centaurdrug
+    app.kubernetes.io/component: api
+    monitoring: centaurdrug
+spec:
+  namespaceSelector:
+    matchNames:
+      - centaurdrug
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: centaurdrug
+      app.kubernetes.io/component: api
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 15s
+      scrapeTimeout: 10s
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: centaurdrug-api
+  namespace: centaurdrug
+  labels:
+    app.kubernetes.io/name: centaurdrug
+    app.kubernetes.io/component: prometheus-rules
+    monitoring: centaurdrug
+spec:
+  groups:
+    - name: centaurdrug-api
+      rules:
+        - alert: CentaurDrugAPITargetDown
+          expr: up{namespace="centaurdrug",service="centaurdrug-api-service"} == 0
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: CentaurDrug API target is down
+            description: Prometheus cannot scrape the CentaurDrug API for at least five minutes.
+        - alert: CentaurDrugAPIHigh5xxRate
+          expr: |
+            (
+              sum(rate(centaurdrug_http_requests_total{namespace="centaurdrug",status=~"5.."}[5m]))
+              /
+              clamp_min(sum(rate(centaurdrug_http_requests_total{namespace="centaurdrug"}[5m])), 1)
+            ) > 0.05
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: CentaurDrug API has an elevated 5xx rate
+            description: More than 5% of API requests have returned server errors for ten minutes.
+        - alert: CentaurDrugAPIHighP95Latency
+          expr: |
+            histogram_quantile(
+              0.95,
+              sum(rate(centaurdrug_http_request_duration_seconds_bucket{namespace="centaurdrug"}[5m]))
+                by (le, route)
+            ) > 2
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: CentaurDrug API p95 latency is high
+            description: At least one API route has p95 latency above two seconds for ten minutes.
+        - alert: CentaurDrugAPIReadinessFailure
+          expr: min_over_time(centaurdrug_readiness{namespace="centaurdrug"}[5m]) == 0
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: CentaurDrug API model readiness is failing
+            description: The API has reported unavailable or invalid model artifacts for five minutes.

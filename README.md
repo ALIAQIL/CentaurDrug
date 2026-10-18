@@ -376,7 +376,7 @@ Main endpoints:
 | GET | `/health` | Checks that the API process responds. |
 | GET | `/ready` | Checks that all five ADMET model folders are present and complete. |
 | GET | `/version` | Returns API version and default model root. |
-| GET | `/metrics` | Returns simple Prometheus-style request counters. |
+| GET | `/metrics` | Returns Prometheus request, latency, readiness, and workflow metrics. |
 | POST | `/rules` | Runs rule filters only. |
 | POST | `/evaluate` | Runs full ADMET panel evaluation. |
 | POST | `/optimize` | Runs the LangGraph optimization agent. |
@@ -907,6 +907,44 @@ The readiness probe is especially important in an ML application. A pod can be
 alive but not useful if the model files are missing. `/ready` prevents traffic
 from going to pods that do not have the full ADMET model panel.
 
+### Prometheus and Grafana monitoring
+
+The API exposes Prometheus-native metrics at `/metrics`. Metrics use bounded
+labels such as HTTP method, route template, status, response mode, and outcome;
+they never include SMILES, prompts, comments, trace IDs, or model outputs.
+
+The monitoring manifests require an existing Prometheus Operator installation
+with the `Prometheus`, `ServiceMonitor`, and `PrometheusRule` CRDs. They create
+a dedicated API-only Prometheus instance with 15-day retention and a 10Gi PVC,
+plus a Grafana instance with a 2Gi PVC and a provisioned CentaurDrug dashboard.
+Prometheus and Grafana are internal `ClusterIP` services.
+
+For local Kubernetes access, create a Grafana password and deploy the stack:
+
+```bash
+export GRAFANA_ADMIN_PASSWORD="$(openssl rand -base64 32)"
+make k8s-monitoring-up
+```
+
+Then use separate terminals for:
+
+```bash
+make k8s-grafana-port-forward
+make k8s-prometheus-port-forward
+```
+
+Open Grafana at `http://127.0.0.1:3000` with username `admin`. The dashboard
+covers request rate, 5xx rate, p95 latency, API readiness, scrape health, chat
+fallbacks, optimization traffic, and evaluation traffic. Prometheus rules cover
+API target availability, elevated 5xx responses, high latency, and sustained
+model-readiness failure. Alertmanager and notification routing are intentionally
+left to the cluster platform.
+
+CI/CD reads `GRAFANA_ADMIN_PASSWORD` from the GitHub Environment and creates the
+Kubernetes Secret at deployment time. The password is not stored in manifests or
+container images. Prometheus/Grafana provide operational metrics; LangSmith
+remains the source for request traces, feedback, and agent evaluations.
+
 The optional MLOps manifests are:
 
 ```text
@@ -1020,6 +1058,8 @@ Implemented:
 - CORS defaults to local FastAPI origins.
 - Kubernetes deployment uses readiness and liveness probes.
 - CI uses a real container smoke test.
+- Prometheus and Grafana Kubernetes manifests provide API monitoring with
+  persistent storage and provisioned dashboards.
 
 Still needed:
 
@@ -1028,7 +1068,6 @@ Still needed:
 - use Kubernetes Secrets for `GEMINI_API_KEY`;
 - add vulnerability scanning;
 - add structured logging;
-- add Prometheus/Grafana monitoring;
 - add model drift and prediction-quality monitoring.
 
 ## Scientific Limitations
@@ -1057,8 +1096,7 @@ Recommended next steps:
 5. Deploy MLflow properly in Kubernetes.
 6. Replace the prototype Airflow DAG with a real five-model training
     orchestration.
-7. Add Prometheus/Grafana dashboards.
-8. Add uncertainty estimation and more ADMET datasets such as CYP2D6, CYP2C9,
+7. Add uncertainty estimation and more ADMET datasets such as CYP2D6, CYP2C9,
     LD50, and DILI.
 9. Add stronger synthetic feasibility checks.
 10. Add optional docking or target-specific scoring after the ADMET and API

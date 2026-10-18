@@ -39,6 +39,9 @@ KUBECTL ?= kubectl
 K8S_NAMESPACE ?= centaurdrug
 K8S_MLFLOW_LOCAL_PORT ?= 5000
 K8S_AIRFLOW_LOCAL_PORT ?= 8080
+K8S_GRAFANA_PORT ?= 3000
+K8S_PROMETHEUS_PORT ?= 9090
+GRAFANA_ADMIN_PASSWORD ?=
 K8S = $(KUBECTL) -n $(K8S_NAMESPACE)
 
 .PHONY: \
@@ -52,7 +55,9 @@ K8S = $(KUBECTL) -n $(K8S_NAMESPACE)
 			k8s-mlflow-port-forward k8s-mlflow-logs \
 		airflow-image k8s-airflow-secret k8s-airflow-db-up k8s-airflow-up \
 		k8s-airflow-local-up \
-		k8s-airflow-port-forward k8s-airflow-logs \
+			k8s-airflow-port-forward k8s-airflow-logs \
+			k8s-monitoring-secret k8s-monitoring-up \
+			k8s-grafana-port-forward k8s-prometheus-port-forward \
 	k8s-mlops-up k8s-mlops-down \
 	verify-mlflow train-sol train-lipo train-ames train-herg train-cyp3a4 train-baselines \
 	train-phase1 predict-sol dvc-remote dvc-push bundle-models \
@@ -262,6 +267,33 @@ k8s-airflow-port-forward:
 
 k8s-airflow-logs:
 	$(K8S) logs -f deployment/centaurdrug-airflow-$(AIRFLOW_COMPONENT) -c $(AIRFLOW_COMPONENT)
+
+k8s-monitoring-secret: k8s-namespace
+	@test -n "$(GRAFANA_ADMIN_PASSWORD)" || (echo "Set GRAFANA_ADMIN_PASSWORD."; exit 1)
+	@$(K8S) create secret generic centaurdrug-grafana-secret \
+		--from-literal=GF_SECURITY_ADMIN_PASSWORD="$(GRAFANA_ADMIN_PASSWORD)" \
+		--dry-run=client -o yaml | $(K8S) apply -f -
+
+k8s-monitoring-up: k8s-monitoring-secret
+	@for crd in prometheuses.monitoring.coreos.com servicemonitors.monitoring.coreos.com prometheusrules.monitoring.coreos.com; do \
+		if ! $(KUBECTL) get crd $$crd >/dev/null 2>&1; then \
+			echo "Missing Prometheus Operator CRD: $$crd"; \
+			exit 1; \
+		fi; \
+	done
+	$(K8S) apply -f k8s/monitoring.yaml
+	$(K8S) apply -f k8s/grafana.yaml
+	$(K8S) rollout status deployment/centaurdrug-grafana --timeout=300s
+	@echo "Grafana: http://127.0.0.1:$(K8S_GRAFANA_PORT)"
+	@echo "Run make k8s-grafana-port-forward"
+
+k8s-grafana-port-forward:
+	@echo "Grafana URL: http://127.0.0.1:$(K8S_GRAFANA_PORT)"
+	$(K8S) port-forward service/centaurdrug-grafana-service $(K8S_GRAFANA_PORT):3000
+
+k8s-prometheus-port-forward:
+	@echo "Prometheus URL: http://127.0.0.1:$(K8S_PROMETHEUS_PORT)"
+	$(K8S) port-forward service/prometheus-operated $(K8S_PROMETHEUS_PORT):9090
 
 k8s-mlops-up: k8s-mlflow-up k8s-airflow-up
 	@echo "MLOps services are applied. Use the port-forward targets to open them locally."

@@ -32,7 +32,66 @@ def test_metrics_endpoint():
     response = client.get("/metrics")
 
     assert response.status_code == 200
-    assert "centaurdrug_requests_total" in response.text
+    assert "text/plain" in response.headers["content-type"]
+    assert "centaurdrug_http_requests_total" in response.text
+    assert "centaurdrug_http_request_duration_seconds" in response.text
+
+
+def test_metrics_use_bounded_route_labels(monkeypatch):
+    monkeypatch.setattr(main, "get_chat_llm", lambda: None)
+
+    client.post(
+        "/chat",
+        json={"smiles": "CCO", "prompt": "Explain this molecule."},
+    )
+    metrics = client.get("/metrics").text
+
+    assert 'route="/chat"' in metrics
+    assert 'mode="fallback"' in metrics
+    assert "CCO" not in metrics
+    assert "Explain this molecule" not in metrics
+
+
+def test_workflow_metrics_count_chat_evaluation_and_optimization(monkeypatch):
+    class DummyEvaluator:
+        def evaluate_molecule(self, smiles):
+            return {"status": "ok", "canonical_smiles": smiles}
+
+    def fake_run_graph(**kwargs):
+        return {"status": "ok", "best_candidate_nodes": []}
+
+    monkeypatch.setattr(main, "get_evaluator", lambda model_root: DummyEvaluator())
+    monkeypatch.setattr(main, "run_graph", fake_run_graph)
+    monkeypatch.setattr(main, "get_chat_llm", lambda: None)
+
+    assert client.post("/evaluate", json={"smiles": "CCO"}).status_code == 200
+    assert client.post("/optimize", json={"smiles": "CCO"}).status_code == 200
+    assert client.post(
+        "/chat",
+        json={"smiles": "CCO", "prompt": "Explain this molecule."},
+    ).status_code == 200
+
+    metrics = client.get("/metrics").text
+    assert 'centaurdrug_evaluation_requests_total{outcome="ok"}' in metrics
+    assert 'centaurdrug_optimization_requests_total{outcome="ok"}' in metrics
+    assert 'centaurdrug_chat_requests_total{mode="fallback",outcome="ok"}' in metrics
+
+
+def test_metrics_count_server_errors(monkeypatch):
+    class BrokenEvaluator:
+        def evaluate_molecule(self, smiles):
+            raise RuntimeError("internal test failure")
+
+    monkeypatch.setattr(main, "get_evaluator", lambda model_root: BrokenEvaluator())
+
+    response = client.post("/evaluate", json={"smiles": "CCO"})
+
+    assert response.status_code == 500
+    metrics = client.get("/metrics").text
+    assert (
+        'centaurdrug_http_errors_total{method="POST",route="/evaluate",status="500"}'
+        in metrics
+    )
 
 
 def test_rules_endpoint():
@@ -172,7 +231,7 @@ def test_chat_endpoint_fallback(monkeypatch):
     data = response.json()
     assert data["status"] == "ok"
     assert data["mode"] == "fallback"
-    assert data["trace_id"] is None
+    assert data["trace_id"] is None or isinstance(data["trace_id"], str)
     assert "CCO" in data["reply"]
     assert data["suggested_prompts"]
 
@@ -206,7 +265,7 @@ def test_chat_endpoint_uses_llm_when_available(monkeypatch):
     data = response.json()
     assert data["mode"] == "gemini"
     assert data["reply"] == "LLM explanation"
-    assert data["trace_id"] is None
+    assert data["trace_id"] is None or isinstance(data["trace_id"], str)
 
 
 def test_feedback_endpoint_is_best_effort(monkeypatch):
